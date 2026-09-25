@@ -66,6 +66,21 @@ The fusion logic lives in one swappable module, `src/engine/positionEstimator.ts
 
 This is a **lightweight, demo-grade heuristic**, not production-grade dead reckoning. In our submission it stands in for the real pipeline: a learned IMU speed model (PyTorch → TFLite), a UKF with non-holonomic constraints, and HMM road-network map matching. `PositionEstimator` has a small input surface (`pushFix` / `pushMotion` / `pushHeading` / `setRoute` / `tick`), so the trained model can replace its internals without touching the map, UI or sensor code.
 
+## The real pipeline (`ml/`)
+
+The in-app fallback is a lightweight heuristic; the actual dead-reckoning pipeline lives in [`ml/`](ml/README.md). It covers IO-VNBD data repair, mount calibration, a learned speed model exported to ONNX/TFLite, a UKF with a non-holonomic motion model, ZUPT and online bias correction, and HMM map matching.
+
+On 2.9 h of held-out drives, after 60 s without GNSS, the median position error is:
+
+| Method | Median error |
+|---|---:|
+| Clew pipeline | **80 m** |
+| IMU integration alone | 135 m |
+| Holding the last speed and heading | 326 m |
+| A frozen dot | 490 m |
+
+Map matching isn't in these numbers yet, because it needs OSM road data. See `ml/README.md` for the full table and caveats.
+
 ## Project layout
 
 ```
