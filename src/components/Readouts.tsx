@@ -36,10 +36,19 @@ export default function Readouts({ snap }: { snap: Snapshot }) {
       : { label: 'Motion', value: e.motion.toUpperCase() },
   ]
   return (
-    <div className="grid grid-cols-3 border-l border-t border-hair">
-      {cells.map((c) => (
-        <Cell key={c.label} {...c} />
-      ))}
+    <div>
+      <div className="grid grid-cols-3 border-l border-t border-hair">
+        {cells.map((c) => (
+          <Cell key={c.label} {...c} />
+        ))}
+      </div>
+      <div className="mt-2 flex items-baseline gap-2 text-[11.5px] leading-snug">
+        <span className="label shrink-0">Engine</span>
+        <span className="num shrink-0" style={{ color: e.engine === 'learned' ? 'var(--fused)' : 'var(--muted)' }}>
+          {e.engine === 'learned' ? 'LEARNED' : 'HEURISTIC'}
+        </span>
+        <span className="min-w-0 text-muted">{e.engineNote}</span>
+      </div>
     </div>
   )
 }

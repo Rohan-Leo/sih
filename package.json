@@ -3,13 +3,14 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
-  "description": "Clew — GNSS + IMU dead-reckoning navigation (SIH 2026, PS 26168, team IcarusSipsTea)",
+  "description": "Clew \u2014 GNSS + IMU dead-reckoning navigation (SIH 2026, PS 26168, team IcarusSipsTea)",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
-    "bake:demo": "node scripts/bake-demo-route.mjs"
+    "bake:demo": "node scripts/bake-demo-route.mjs",
+    "check:model": "jiti scripts/verify-speednet.ts && jiti scripts/replay-check.ts"
   },
   "dependencies": {
     "framer-motion": "^13.4.4",
@@ -24,6 +25,7 @@
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
     "@vitejs/plugin-react": "^6.1.1",
+    "jiti": "^2.7.0",
     "tailwindcss": "^4.3.3",
     "typescript": "^5.9.3",
     "vite": "^8.3.1"

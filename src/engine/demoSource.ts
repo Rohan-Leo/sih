@@ -11,7 +11,7 @@
  * in Live mode.
  */
 import { type LngLat, Polyline, angleDiff, bearing, destination, haversine } from '../lib/geo'
-import type { SensorSink } from './sources'
+import type { DeadZone, ScriptedSource, SensorSink } from './sources'
 
 export interface DemoSample {
   lat: number
@@ -19,17 +19,13 @@ export interface DemoSample {
   t: number
 }
 
-export interface DeadZone {
-  from: number
-  to: number
-  label: string
-}
+export type { DeadZone }
 
 const MOUNT_OFFSET_DEG = 7 // phone isn't perfectly aligned with the car
 const FIX_PERIOD = 1000
 const IMU_PERIOD = 40
 
-export class DemoSource {
+export class DemoSource implements ScriptedSource {
   readonly samples: DemoSample[]
   readonly path: Polyline
   readonly duration: number

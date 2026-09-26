@@ -89,22 +89,31 @@ export default function AboutDrawer({ open, onClose }: { open: boolean; onClose:
 
               <Section title="What this app actually runs">
                 <p>
-                  The in-app fallback is a <strong className="font-medium">simplified, real-time stand-in</strong> for
-                  that pipeline — a lightweight, demo-grade heuristic, not production-grade dead reckoning. It does
-                  run for real on every frame, in both Live and Demo mode:
+                  <strong className="font-medium">Learned engine</strong> — used whenever the device streams motion
+                  sensors. It runs a TypeScript port of our trained pipeline in the browser:
                 </p>
                 <ul className="list-disc space-y-1 pl-5">
-                  <li>GNSS is declared lost after 3 s without a fix, on geolocation errors, or when reported accuracy jumps well past its recent baseline.</li>
-                  <li>Speed is the last GNSS speed, decaying slowly while the accelerometer detects motion and quickly when it reads still; step cadence is used at walking speeds.</li>
-                  <li>Heading comes from the compass (offset-calibrated against the last GNSS course) or integrated gyro yaw.</li>
-                  <li>Instead of HMM matching, the estimate is constrained to the active route polyline.</li>
-                  <li>On reacquisition the dot eases back onto the GNSS track and the drift is logged.</li>
+                  <li>online phone-mount calibration from the first ~5 min of driving with GNSS</li>
+                  <li>the speed network (PyTorch-trained, 51k parameters, run once per second)</li>
+                  <li>a UKF with a non-holonomic motion model, zero-velocity updates and online speed-bias correction</li>
                 </ul>
+                <p>
+                  On 2.9 h of held-out IO-VNBD drives, its median error after 60 s without GNSS was{' '}
+                  <span className="num">81 m</span>. For comparison: <span className="num">135 m</span> integrating the
+                  IMU alone, <span className="num">326 m</span> holding the last speed and heading, and{' '}
+                  <span className="num">490 m</span> for a frozen dot. It is a research prototype, not production-grade:
+                  errors of tens to hundreds of metres are normal over a long outage, which is what the growing halo
+                  shows.
+                </p>
+                <p>
+                  <strong className="font-medium">Heuristic engine</strong> — the fallback while the mount calibrates,
+                  on laptops without motion sensors, and in the synthetic Delhi demo. It uses decaying last-known
+                  speed, compass or gyro heading, and snapping to the route.
+                </p>
                 <p className="text-muted">
-                  Expect drift of metres to tens of metres over a short outage, growing with time — that is what the
-                  widening halo shows. The estimator lives in one module
-                  (<span className="num text-[12px]">src/engine/positionEstimator.ts</span>) so the trained model can be
-                  dropped in without touching the map or UI.
+                  Not in the browser yet: HMM map matching on the OpenStreetMap road network (implemented offline in{' '}
+                  <span className="num text-[12px]">ml/</span>). During an outage the planned route stands in for it.
+                  In the recorded-drive demo, even that is switched off, because there the route is the true track.
                 </p>
               </Section>
 

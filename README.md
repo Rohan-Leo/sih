@@ -27,7 +27,11 @@ If the basemap can't be reached (offline, restricted venue Wi-Fi), the map falls
 ## Modes
 
 - **Live** — real `navigator.geolocation.watchPosition` + `DeviceMotionEvent` + `DeviceOrientationEvent`. Search → pick a result → **Start navigation**.
-- **Demo** — for a judges' table where nobody moves. A prerecorded drive (`src/demo/demoRoute.json`) is replayed through the **same** estimator, map and UI. Play/pause, 0.5×–4× speed, two hatched dead zones where the simulated GNSS feed is withheld, and a **Simulate GNSS loss now** button for an outage on cue. Demo mode also shows the error against ground truth, which Live mode can't know.
+- **Demo** — for a judges' table where nobody moves. It has two scenarios:
+  - **Recorded drive** (default) replays 14 minutes of a real IO-VNBD test drive that the model never saw: the phone's own accelerometer and gyroscope, plus 1 Hz GNSS. It runs through the **learned engine**. The first 5 minutes calibrate the phone mount, and **Skip mount calibration** jumps past them. After that, GNSS drops in two dead zones, and the dashed line shows where the car really went.
+  - **New Delhi route** is a scripted drive on synthetic sensors (`src/demo/demoRoute.json`), run through the heuristic engine.
+
+  Both scenarios go through the **same** estimator, map and UI. Play/pause, 0.5×–4× speed, two hatched dead zones where the simulated GNSS feed is withheld, and a **Simulate GNSS loss now** button for an outage on cue. Demo mode also shows the error against ground truth, which Live mode can't know.
   Open straight into it with `/?mode=demo`.
 
 ### Regenerating the demo route
@@ -54,7 +58,18 @@ On a laptop there are usually no motion sensors. Clew still works, and says so: 
 - **Vercel:** import the repo; `vercel.json` sets `npm run build` → `dist`.
 - **Netlify:** import the repo; `netlify.toml` sets the same, plus an SPA fallback.
 
-## How the fallback works — and what it isn't
+## The learned engine (in the browser)
+
+`src/ml/` is a TypeScript port of the trained pipeline from `ml/`:
+- online phone-mount calibration
+- the speed network, loaded from `public/ml/speednet.bin` (201 KB) and run once per second in about 20 ms, with no ML runtime
+- a UKF with zero-velocity updates and online speed-bias correction
+
+It takes over from the heuristic automatically once the mount is calibrated, which needs about 5 minutes of driving with GNSS. You'll see **Engine: LEARNED** under the readouts. Without motion sensors (most laptops) it stays on the heuristic.
+
+`npm run check:model` checks the TypeScript network against PyTorch outputs, then replays the recorded drive through both engines headlessly. On that drive, the learned engine ends dead zones A and B with 42 m and 5 m of error; the heuristic ends them with 183 m and 101 m.
+
+## How the heuristic fallback works — and what it isn't
 
 The fusion logic lives in one swappable module, `src/engine/positionEstimator.ts`:
 
@@ -74,7 +89,7 @@ On 2.9 h of held-out drives, after 60 s without GNSS, the median position error 
 
 | Method | Median error |
 |---|---:|
-| Clew pipeline | **80 m** |
+| Clew pipeline | **81 m** |
 | IMU integration alone | 135 m |
 | Holding the last speed and heading | 326 m |
 | A frozen dot | 490 m |

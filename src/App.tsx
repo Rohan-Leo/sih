@@ -11,7 +11,7 @@ import SearchBox from './components/SearchBox'
 import StatusBadge from './components/StatusBadge'
 import TurnBanner from './components/TurnBanner'
 import Readouts from './components/Readouts'
-import DemoControls from './components/DemoControls'
+import DemoControls, { ScenarioPicker } from './components/DemoControls'
 import EventLog from './components/EventLog'
 import AboutDrawer from './components/AboutDrawer'
 import {
@@ -119,7 +119,13 @@ export default function App() {
       <div className="ticks flex h-11 items-center gap-2 rounded-sm border border-hair-strong bg-panel px-3 text-[14px]">
         <span className="label shrink-0">Demo</span>
         <span className="truncate">
-          {snap.demo?.origin} <span className="text-muted">→</span> {snap.demo?.destination}
+          {snap.demo ? (
+            <>
+              {snap.demo.origin} <span className="text-muted">→</span> {snap.demo.destination}
+            </>
+          ) : (
+            'Loading…'
+          )}
         </span>
       </div>
     )
@@ -360,9 +366,16 @@ function ConsoleBody({
 
   return (
     <div>
-      {snap.mode === 'demo' && snap.demo && (
+      {snap.mode === 'demo' && (
         <Section title="Judge demo">
-          <DemoControls demo={snap.demo} engine={engine} compact={compact} />
+          <div className="space-y-3">
+            {!compact && <ScenarioPicker scenario={snap.demoScenario} engine={engine} />}
+            {snap.demo ? (
+              <DemoControls demo={snap.demo} engine={engine} compact={compact} />
+            ) : (
+              <p className="text-[13px] text-muted">{snap.demoLoading ? 'Loading recorded drive…' : 'Demo unavailable.'}</p>
+            )}
+          </div>
         </Section>
       )}
 

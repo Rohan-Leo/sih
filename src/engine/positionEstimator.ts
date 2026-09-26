@@ -46,7 +46,8 @@ import {
 
 export type FixMode = 'SEARCHING' | 'LIVE' | 'DR'
 export type MotionState = 'moving' | 'still' | 'unknown'
-export type HeadingSource = 'gnss' | 'compass' | 'gyro' | 'route' | 'held'
+export type HeadingSource = 'gnss' | 'compass' | 'gyro' | 'route' | 'held' | 'ukf'
+export type EngineName = 'heuristic' | 'learned'
 
 export interface GnssFix {
   lon: number
@@ -69,6 +70,9 @@ export interface MotionSample {
   includesGravity: boolean
   /** yaw rate about the device z axis, deg/s (DeviceMotionEvent.rotationRate.alpha) */
   gyroZ: number | null
+  /** optional full vectors for the learned engine: gravity (m/s²) and gyro (rad/s), device frame */
+  gravity?: [number, number, number]
+  gyro?: [number, number, number]
   t: number
 }
 
@@ -125,6 +129,8 @@ export interface EstimatorState {
   headingSource: HeadingSource
   snapped: boolean
   blending: boolean
+  engine: EngineName
+  engineNote: string
 }
 
 export interface EstimatorEvent {
@@ -144,53 +150,53 @@ const G = 9.80665
 
 export class PositionEstimator {
   readonly cfg: EstimatorConfig
-  private route: Polyline | null = null
-  private listeners = new Set<(e: EstimatorEvent) => void>()
+  protected route: Polyline | null = null
+  protected listeners = new Set<(e: EstimatorEvent) => void>()
 
   // GNSS
-  private lastGoodFix: GnssFix | null = null
-  private prevFixForSpeed: GnssFix | null = null
-  private accHistory: number[] = []
-  private gnssSpeed = 0
-  private gnssCourse: number | null = null
-  private newGoodFix = false
-  private degradedReason: string | null = null
+  protected lastGoodFix: GnssFix | null = null
+  protected prevFixForSpeed: GnssFix | null = null
+  protected accHistory: number[] = []
+  protected gnssSpeed = 0
+  protected gnssCourse: number | null = null
+  protected newGoodFix = false
+  protected degradedReason: string | null = null
   /** one log line per degradation episode, not per rejected fix */
-  private degradedLogged = false
-  private everHadFix = false
+  protected degradedLogged = false
+  protected everHadFix = false
   /** recent intervals between good fixes — tells a 1 Hz GNSS stream from on-change (Wi-Fi/IP) location */
-  private fixIntervals: number[] = []
-  private errorSinceFix = false
+  protected fixIntervals: number[] = []
+  protected errorSinceFix = false
 
   // fused estimate
-  private est: LngLat | null = null
-  private estHeading = 0
-  private estSpeed = 0
-  private sigma = 50
-  private along = 0
-  private snapped = false
-  private headingSource: HeadingSource = 'held'
-  private lastTickT: number | null = null
+  protected est: LngLat | null = null
+  protected estHeading = 0
+  protected estSpeed = 0
+  protected sigma = 50
+  protected along = 0
+  protected snapped = false
+  protected headingSource: HeadingSource = 'held'
+  protected lastTickT: number | null = null
 
   // dead reckoning
-  private drActive = false
-  private drStartT = 0
-  private lastGoodBeforeOutageT = 0
-  private drDistance = 0
-  private drSpeed = 0
-  private sigmaAtLoss = 5
-  private headingAtLoss = 0
-  private speedAtLoss = 0
-  private compassOffset = 0
-  private gyroYaw = 0
-  private offHeadingSince: number | null = null
-  private pendingShift = 0
-  private drBase: LngLat | null = null
-  private snapOffset: [number, number] = [0, 0]
-  private track: LngLat | null = null
+  protected drActive = false
+  protected drStartT = 0
+  protected lastGoodBeforeOutageT = 0
+  protected drDistance = 0
+  protected drSpeed = 0
+  protected sigmaAtLoss = 5
+  protected headingAtLoss = 0
+  protected speedAtLoss = 0
+  protected compassOffset = 0
+  protected gyroYaw = 0
+  protected offHeadingSince: number | null = null
+  protected pendingShift = 0
+  protected drBase: LngLat | null = null
+  protected snapOffset: [number, number] = [0, 0]
+  protected track: LngLat | null = null
 
   // blend-back after reacquisition
-  private blend: {
+  protected blend: {
     startT: number
     ghost: LngLat
     ghostAlong: number
@@ -200,14 +206,14 @@ export class PositionEstimator {
   } | null = null
 
   // sensors
-  private compass: HeadingSample | null = null
-  private lastGyroT: number | null = null
-  private lastMotionT: number | null = null
-  private magWindow: MagSample[] = []
-  private magEma = 0
-  private stepTimes: number[] = []
-  private lastStepT = 0
-  private stepArmed = true
+  protected compass: HeadingSample | null = null
+  protected lastGyroT: number | null = null
+  protected lastMotionT: number | null = null
+  protected magWindow: MagSample[] = []
+  protected magEma = 0
+  protected stepTimes: number[] = []
+  protected lastStepT = 0
+  protected stepArmed = true
 
   constructor(cfg: Partial<EstimatorConfig> = {}) {
     this.cfg = { ...DEFAULT_CONFIG, ...cfg }
@@ -218,7 +224,7 @@ export class PositionEstimator {
     return () => this.listeners.delete(cb)
   }
 
-  private emit(e: EstimatorEvent) {
+  protected emit(e: EstimatorEvent) {
     this.listeners.forEach((l) => l(e))
   }
 
@@ -341,7 +347,7 @@ export class PositionEstimator {
 
   // ── derived sensor features ───────────────────────────────────────────────
 
-  private baselineAccuracy(): number | null {
+  protected baselineAccuracy(): number | null {
     if (this.accHistory.length < 3) return null
     const s = [...this.accHistory].sort((a, b) => a - b)
     return s[Math.floor(s.length / 2)]
@@ -352,13 +358,13 @@ export class PositionEstimator {
    * report on change, so silence there means "hasn't moved" — only errors or
    * degraded accuracy count as loss for such sources.
    */
-  private isStreaming(): boolean {
+  protected isStreaming(): boolean {
     if (this.fixIntervals.length < 3) return false
     const s = [...this.fixIntervals].sort((a, b) => a - b)
     return s[Math.floor(s.length / 2)] < 1600
   }
 
-  private motionState(t: number): MotionState {
+  protected motionState(t: number): MotionState {
     if (this.lastMotionT === null || t - this.lastMotionT > 1500 || this.magWindow.length < 8) return 'unknown'
     const n = this.magWindow.length
     const mean = this.magWindow.reduce((a, s) => a + s.mag, 0) / n
@@ -366,13 +372,13 @@ export class PositionEstimator {
     return Math.sqrt(variance) > 0.12 ? 'moving' : 'still'
   }
 
-  private stepSpeed(t: number): number {
+  protected stepSpeed(t: number): number {
     const recent = this.stepTimes.filter((s) => s > t - 3000)
     if (recent.length < 3) return 0
     return (recent.length / 3) * this.cfg.strideM
   }
 
-  private compassFresh(t: number): boolean {
+  protected compassFresh(t: number): boolean {
     return this.compass !== null && t - this.compass.t < 1500
   }
 
@@ -431,11 +437,7 @@ export class PositionEstimator {
       this.estHeading = next.heading
       this.headingSource = next.source
       this.estSpeed = this.drSpeed
-      const outageS = (t - this.lastGoodBeforeOutageT) / 1000
-      this.sigma = Math.min(
-        300,
-        this.sigmaAtLoss + 0.4 * outageS + (this.snapped ? 0.05 : 0.12) * this.drDistance,
-      )
+      this.sigma = this.drSigma((t - this.lastGoodBeforeOutageT) / 1000)
       mode = 'DR'
     } else {
       // GNSS usable. Predict the fix forward a little so the dot glides
@@ -485,7 +487,20 @@ export class PositionEstimator {
     return this.snapshot(t, mode, motion)
   }
 
-  private enterDeadReckoning(t: number, age: number) {
+  /** 1-σ uncertainty while dead reckoning (heuristic growth model; the learned engine uses its covariance). */
+  protected drSigma(outageS: number): number {
+    return Math.min(300, this.sigmaAtLoss + 0.4 * outageS + (this.snapped ? 0.05 : 0.12) * this.drDistance)
+  }
+
+  /** Hook for subclasses, called once when dead reckoning starts. */
+  protected onEnterDeadReckoning(_t: number): void {}
+
+  /** Which fusion engine is producing the dead-reckoned position (shown in the UI). */
+  protected engineInfo(): { engine: EngineName; engineNote: string } {
+    return { engine: 'heuristic', engineNote: 'Decaying speed + compass/gyro, route-constrained' }
+  }
+
+  protected enterDeadReckoning(t: number, age: number) {
     this.drActive = true
     this.drStartT = t
     this.lastGoodBeforeOutageT = this.lastGoodFix!.t
@@ -518,6 +533,7 @@ export class PositionEstimator {
         this.drBase = pr.point
       }
     }
+    this.onEnterDeadReckoning(t)
     const reason = this.degradedReason ?? `no fix for ${(age / 1000).toFixed(1)} s`
     this.emit({
       kind: 'lost',
@@ -530,7 +546,7 @@ export class PositionEstimator {
    * One dead-reckoning step. THIS is the function the trained model replaces:
    * speed ← learned IMU speed regressor, heading ← UKF yaw, matching ← HMM.
    */
-  private propagateDeadReckoning(
+  protected propagateDeadReckoning(
     t: number,
     dt: number,
     motion: MotionState,
@@ -615,7 +631,7 @@ export class PositionEstimator {
   }
 
   /** Nearest along-distance (−80 m … +250 m) where the route runs on `heading` (±25°). */
-  private findHeadingMatch(along: number, heading: number): number | null {
+  protected findHeadingMatch(along: number, heading: number): number | null {
     if (!this.route) return null
     let best: number | null = null
     for (let d = Math.max(0, along - 80); d <= Math.min(this.route.length, along + 250); d += 4) {
@@ -626,7 +642,7 @@ export class PositionEstimator {
     return best
   }
 
-  private snapshot(t: number, mode: FixMode, motion: MotionState): EstimatorState {
+  protected snapshot(t: number, mode: FixMode, motion: MotionState): EstimatorState {
     return {
       position: this.est,
       heading: this.estHeading,
@@ -642,6 +658,7 @@ export class PositionEstimator {
       headingSource: this.headingSource,
       snapped: this.drActive && this.snapped,
       blending: this.blend !== null,
+      ...this.engineInfo(),
     }
   }
 

@@ -10,14 +10,14 @@ GNSS is cut for 120 s at one-minute intervals while driving. Every method starts
 
 | Method | 10 s | 30 s | 60 s | 120 s |
 |---|---:|---:|---:|---:|
-| Freeze (typical map app: dot stops) | 97 (100%) | 302 (98%) | 490 (87%) | 772 (78%) |
-| Hold last GNSS speed & heading | 21 (22%) | 132 (40%) | 326 (54%) | 801 (72%) |
-| IMU integration only | 17 (14%) | 63 (22%) | 135 (24%) | 267 (23%) |
-| UKF + ZUPT, no ML | 19 (20%) | 98 (43%) | 235 (53%) | 538 (53%) |
-| UKF + ZUPT + learned speed | 17 (19%) | 61 (24%) | 111 (21%) | 219 (19%) |
-| **Clew: + online bias correction** | **15 (17%)** | **49 (18%)** | **80 (14%)** | **161 (14%)** |
+| Freeze (typical map app: dot stops) | 97 (100%) | 301 (98%) | 490 (87%) | 772 (78%) |
+| Hold last GNSS speed & heading | 21 (22%) | 132 (40%) | 326 (54%) | 802 (72%) |
+| IMU integration only | 17 (13%) | 62 (22%) | 135 (24%) | 268 (23%) |
+| UKF + ZUPT, no ML | 19 (20%) | 98 (43%) | 235 (53%) | 533 (53%) |
+| UKF + ZUPT + learned speed | 16 (19%) | 55 (22%) | 104 (20%) | 187 (17%) |
+| **Clew: + online bias correction** | **15 (16%)** | **48 (17%)** | **81 (14%)** | **154 (14%)** |
 
-At 60 s, Clew's mean error is 141 m (vs 187 m for IMU-only) and its 90th percentile is 388 m (vs 383 m). The validation split (4.7 h, 144 outages) shows the same ordering: Clew 72 m median at 60 s, vs 160 m for IMU-only. Full tables are in `results/`.
+At 60 s, Clew's mean error is 138 m (vs 187 m for IMU-only) and its 90th percentile is 377 m (vs 383 m). The validation split (4.7 h, 144 outages) shows the same ordering: Clew 77 m median at 60 s, vs 157 m for IMU-only. All features are strictly causal, i.e. computable live. Full tables are in `results/`.
 
 ### Read these numbers honestly
 
@@ -41,6 +41,7 @@ At 60 s, Clew's mean error is 141 m (vs 187 m for IMU-only) and its 90th percent
 | Fusion | `clew_ml/ukf.py` | UKF with state [E, N, ψ, v, gyro bias, accel bias]. Non-holonomic unicycle motion. Updates: GNSS with innovation gating, ZUPT, learned speed, and an optional centripetal constraint. |
 | Bias correction | `evaluate.py: SpeedCorrector` | Learns v_gnss ≈ k·v̂ online while GNSS is good (~2 min memory) and applies it during outages. |
 | Map matching | `clew_ml/mapmatch.py` | Online HMM (Newson & Krumm): candidates on nearby road segments, emission from filter σ, transitions from network vs travelled distance. The matched point feeds back into the UKF. |
+| Web export | `clew_ml/export_web.py` | Weights as float32 (`public/ml/speednet.bin`), a 14-min held-out drive for the in-app replay demo, and test vectors. The TypeScript port (`src/ml/`) matches PyTorch to 6e-6. |
 | Export | `clew_ml/export.py` | `speednet.onnx` and `speednet.tflite` (216 KB each; both match PyTorch to <1e-5; 0.16 ms per inference on CPU), plus `speednet.weights.json`. |
 
 Dataset repairs in `data.py`, each discovered along the way:

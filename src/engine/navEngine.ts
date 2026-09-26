@@ -7,14 +7,21 @@
  */
 import { type LngLat, Polyline, haversine } from '../lib/geo'
 import { type Route, type RouteStep, fetchRoute, fromOsrm } from '../services/osrm'
-import { type EstimatorState, type FixMode, PositionEstimator } from './positionEstimator'
-import { DemoSource, type DeadZone } from './demoSource'
+import type { EstimatorState, FixMode } from './positionEstimator'
+import { DemoSource } from './demoSource'
 import { LiveSource, type LiveStatus } from './liveSource'
-import type { SensorSink } from './sources'
+import { ReplaySource } from './replaySource'
+import type { DeadZone, ScriptedSource, SensorSink } from './sources'
+import { LearnedEstimator } from '../ml/learnedEstimator'
+import { SpeedNet } from '../ml/speednet'
 import demoData from '../demo/demoRoute.json'
 import { buildTimeline } from '../demo/timeline.js'
 
 export type AppMode = 'live' | 'demo'
+/** recorded: a real held-out IO-VNBD drive (real phone IMU); delhi: synthetic sensors on a baked route */
+export type DemoScenario = 'recorded' | 'delhi'
+const SCENARIO_KEY = 'clew.demoScenario'
+const ML_BASE = `${import.meta.env.BASE_URL}ml/`
 
 export interface ActiveRoute {
   route: Route
@@ -63,6 +70,9 @@ export interface DemoInfo {
   truthAlong: number
   origin: string
   destination: string
+  scenario: DemoScenario
+  /** sim time (ms) at which the recorded drive's mount calibration completes */
+  calibrationEnd: number | null
 }
 
 export interface Snapshot {
@@ -76,6 +86,8 @@ export interface Snapshot {
   log: LogEntry[]
   routing: boolean
   routeError: string | null
+  demoScenario: DemoScenario
+  demoLoading: boolean
   version: number
 }
 
@@ -102,10 +114,14 @@ const TRAIL_MAX_POINTS = 6000
 
 export class NavEngine {
   mode: AppMode = 'live'
-  readonly estimator = new PositionEstimator()
+  readonly estimator = new LearnedEstimator()
   readonly live: LiveSource
-  private demo: DemoSource | null = null
+  private demo: ScriptedSource | null = null
   private demoFile: DemoFile = demoData as DemoFile
+  scenario: DemoScenario = readScenario()
+  demoLoading = false
+  private replay: Promise<ReplaySource> | null = null
+  private loadToken = 0
 
   route: ActiveRoute | null = null
   navigating = false
@@ -149,6 +165,12 @@ export class NavEngine {
     this.live = new LiveSource(() => (this.dirty = true))
     this.lastEst = this.estimator.tick(0)
     this.snapshot = this.buildSnapshot()
+    SpeedNet.load(ML_BASE)
+      .then((net) => {
+        this.estimator.net = net
+        this.dirty = true
+      })
+      .catch(() => this.addLog('warn', 'Speed model failed to load — using the heuristic fallback'))
     this.estimator.onEvent((e) => {
       const kind: LogEntry['kind'] =
         e.kind === 'lost' ? 'lost' : e.kind === 'reacquired' ? 'reacquired' : e.kind === 'acquired' ? 'info' : 'warn'
@@ -249,12 +271,14 @@ export class NavEngine {
         withheld: this.demo.gnssWithheld(this.simT),
         manualRemaining: this.demo.manualOutageRemaining(this.simT),
         truthError: this.demo.errorAgainstTruth(this.lastEst.position, this.simT),
-        source: this.demoFile.source,
+        source: this.scenario === 'delhi' ? this.demoFile.source : 'recorded',
         deadZones: this.demo.deadZones,
         pathLength: this.demo.path.length,
         truthAlong: truth.along,
-        origin: this.demoFile.origin.name,
-        destination: this.demoFile.destination.name,
+        origin: this.scenario === 'delhi' ? this.demoFile.origin.name : 'Recorded drive · Coventry, UK',
+        destination: this.scenario === 'delhi' ? this.demoFile.destination.name : 'IO-VNBD held-out test drive',
+        scenario: this.scenario,
+        calibrationEnd: this.demo instanceof ReplaySource ? this.demo.manifest.calibrationSamples * 100 : null,
       }
     }
     return {
@@ -267,6 +291,8 @@ export class NavEngine {
       live: this.live.status,
       log: this.log,
       routing: this.routing,
+      demoScenario: this.scenario,
+      demoLoading: this.demoLoading,
       routeError: this.routeError,
       version: this.version,
     }
@@ -437,6 +463,7 @@ export class NavEngine {
     this.playing = false
     this.simT = 0
     this.mode = mode
+    if (mode === 'live') this.estimator.configure({ enabled: true, routeConstraint: true })
     this.lastEst = this.estimator.tick(this.now())
     this.lastProgress = null
     this.log = []
@@ -460,6 +487,35 @@ export class NavEngine {
   // ── demo ──────────────────────────────────────────────────────────────────
 
   private loadDemo() {
+    const token = ++this.loadToken
+    if (this.scenario === 'recorded') {
+      // Real phone IMU → the learned engine. No route snapping: the "route"
+      // here is the recorded track itself, so using it would be cheating.
+      this.estimator.configure({ enabled: true, routeConstraint: false })
+      this.demo = null
+      this.demoLoading = true
+      this.dirty = true
+      this.replay ??= ReplaySource.load(`${ML_BASE}replay-y1-3`)
+      this.replay
+        .then((src) => {
+          if (token !== this.loadToken || this.mode !== 'demo') return
+          src.reset()
+          this.demo = src
+          this.demoLoading = false
+          const coords = src.manifest.osrm.geometry.coordinates
+          this.setRoute(fromOsrm(src.manifest.osrm, 'End of recorded drive'), coords[coords.length - 1] as LngLat)
+          this.navigating = true
+          this.addLog('info', `Loaded ${src.manifest.name}. The phone mount calibrates during the first 5 min, then GNSS drops in two dead zones.`)
+        })
+        .catch(() => {
+          this.demoLoading = false
+          this.replay = null
+          this.addLog('warn', 'Could not load the recorded drive — switch to the Delhi scenario')
+        })
+      return
+    }
+    // Synthetic sensors: the learned model was never meant for them, use the heuristic.
+    this.estimator.configure({ enabled: false, routeConstraint: true })
     const cached = readCache()
     if (cached) this.demoFile = cached
     const f = this.demoFile
@@ -469,6 +525,33 @@ export class NavEngine {
     this.navigating = true
     this.addLog('info', `Demo route loaded: ${f.origin.name} → ${f.destination.name} (${f.source === 'osrm' ? 'OSRM route' : 'hand-traced route'})`)
     if (f.source !== 'osrm') void this.upgradeDemoRoute()
+  }
+
+  setScenario(s: DemoScenario) {
+    if (s === this.scenario) return
+    this.scenario = s
+    try {
+      localStorage.setItem(SCENARIO_KEY, s)
+    } catch {
+      /* ignore */
+    }
+    this.resetDemo()
+  }
+
+  /** Fast-forward the demo clock (e.g. past the recorded drive's mount calibration). */
+  skipTo(target: number) {
+    if (this.mode !== 'demo' || !this.demo || target <= this.simT) return
+    while (this.simT < target) {
+      this.simT = Math.min(target, this.simT + 50)
+      this.demo.advance(this.simT, this.sink)
+      this.lastEst = this.estimator.tick(this.simT)
+      this.updateTrail(this.lastEst)
+      const truth = this.demo.truthAt(this.simT).pos
+      const last = this.truthTrail[this.truthTrail.length - 1]
+      if (!last || haversine(last, truth) > TRAIL_MIN_STEP) this.truthTrail.push(truth)
+    }
+    this.addLog('info', `Skipped ahead to ${Math.floor(target / 60000)}:${String(Math.floor((target % 60000) / 1000)).padStart(2, '0')}`)
+    this.dirty = true
   }
 
   /** If the bundled route is the offline hand-traced fallback, fetch the real one. */
@@ -533,11 +616,22 @@ export class NavEngine {
     if (!this.demo) return
     const wasActive = this.demo.manualOutageRemaining(this.simT) > 0
     this.demo.toggleManualOutage(this.simT)
-    this.addLog('warn', wasActive ? 'Presenter restored GNSS' : 'Presenter triggered GNSS loss (12 s)')
+    const secs = Math.round(this.demo.manualOutageRemaining(this.simT) / 1000)
+    this.addLog('warn', wasActive ? 'Presenter restored GNSS' : `Presenter triggered GNSS loss (${secs} s)`)
   }
 
   get lastFrameMode(): FixMode {
     return this.lastEst.mode
+  }
+}
+
+function readScenario(): DemoScenario {
+  try {
+    const q = new URLSearchParams(location.search).get('scenario')
+    const v = q ?? localStorage.getItem(SCENARIO_KEY)
+    return v === 'delhi' ? 'delhi' : 'recorded'
+  } catch {
+    return 'recorded'
   }
 }
 

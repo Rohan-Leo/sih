@@ -1,4 +1,4 @@
-import type { DemoInfo, NavEngine } from '../engine/navEngine'
+import type { DemoInfo, DemoScenario, NavEngine } from '../engine/navEngine'
 import { IconPause, IconPlay, IconReset } from './Icons'
 
 const RATES = [0.5, 1, 2, 3, 4]
@@ -6,6 +6,30 @@ const RATES = [0.5, 1, 2, 3, 4]
 function mmss(ms: number) {
   const s = Math.max(0, Math.floor(ms / 1000))
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
+}
+
+export function ScenarioPicker({ scenario, engine }: { scenario: DemoScenario; engine: NavEngine }) {
+  const opts: { id: DemoScenario; title: string; sub: string }[] = [
+    { id: 'recorded', title: 'Recorded drive', sub: 'real phone IMU · learned engine' },
+    { id: 'delhi', title: 'New Delhi route', sub: 'synthetic sensors · heuristic' },
+  ]
+  return (
+    <div role="radiogroup" aria-label="Demo scenario" className="grid grid-cols-2 gap-1.5">
+      {opts.map((o) => (
+        <button
+          key={o.id}
+          type="button"
+          role="radio"
+          aria-checked={scenario === o.id}
+          onClick={() => engine.setScenario(o.id)}
+          className={`rounded-sm border px-2.5 py-1.5 text-left ${scenario === o.id ? 'border-ink bg-panel-2' : 'border-hair text-muted hover:border-hair-strong'}`}
+        >
+          <span className="block text-[13px] text-ink">{o.title}</span>
+          <span className="block text-[10.5px] text-muted">{o.sub}</span>
+        </button>
+      ))}
+    </div>
+  )
 }
 
 export default function DemoControls({ demo, engine, compact = false }: { demo: DemoInfo; engine: NavEngine; compact?: boolean }) {
@@ -76,6 +100,16 @@ export default function DemoControls({ demo, engine, compact = false }: { demo: 
         <span className="num w-10 text-right text-sm">{demo.rate}×</span>
       </div>
 
+      {demo.calibrationEnd !== null && demo.simT < demo.calibrationEnd && (
+        <button
+          type="button"
+          onClick={() => engine.skipTo(demo.calibrationEnd! + 1000)}
+          className="flex h-9 w-full items-center justify-center rounded-sm border border-hair-strong text-[13px] text-ink"
+        >
+          Skip mount calibration → {mmss(demo.calibrationEnd + 1000)}
+        </button>
+      )}
+
       <button
         type="button"
         onClick={() => engine.toggleSimulatedOutage()}
@@ -93,9 +127,13 @@ export default function DemoControls({ demo, engine, compact = false }: { demo: 
         ) : demo.withheld ? (
           <span style={{ color: 'var(--thread)' }}>GNSS feed withheld by presenter.</span>
         ) : compact ? null : (
-          <>Scripted drive, real pipeline: fixes are withheld in hatched segments and the same estimator used in Live mode must notice and dead-reckon.</>
+          demo.scenario === 'recorded' ? (
+            <>A real drive the model never saw in training, replayed from the phone's own sensors. GNSS is withheld in hatched segments; the dashed line is where the car really went.</>
+          ) : (
+            <>Scripted drive, real pipeline: fixes are withheld in hatched segments and the same estimator used in Live mode must notice and dead-reckon.</>
+          )
         )}
-        {demo.source !== 'osrm' && !compact && (
+        {demo.source === 'hand-traced' && !compact && (
           <span className="mt-1 block text-faint">Route geometry: offline hand-traced fallback. Run <span className="num">npm run bake:demo</span> with internet to bake the OSRM route.</span>
         )}
       </div>

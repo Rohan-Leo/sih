@@ -143,12 +143,22 @@ export class LiveSource {
     const a = e.accelerationIncludingGravity ?? e.acceleration
     if (!a || a.x === null || a.y === null || a.z === null) return
     if (this.status.motion !== 'active') this.set({ motion: 'active' })
+    const lin = e.acceleration
+    const rr = e.rotationRate
+    const D2R = Math.PI / 180
     this.sink?.pushMotion({
       ax: a.x,
       ay: a.y,
       az: a.z,
       includesGravity: e.accelerationIncludingGravity !== null,
-      gyroZ: e.rotationRate?.alpha ?? null,
+      // gravity = (with gravity) − (without), when the browser gives both
+      gravity:
+        e.accelerationIncludingGravity && lin && lin.x !== null && lin.y !== null && lin.z !== null
+          ? [a.x - lin.x, a.y - lin.y, a.z - lin.z]
+          : undefined,
+      // rotationRate is deg/s about z (alpha), x (beta), y (gamma); the learned engine wants rad/s x,y,z
+      gyro: rr && rr.alpha !== null && rr.beta !== null && rr.gamma !== null ? [rr.beta * D2R, rr.gamma * D2R, rr.alpha * D2R] : undefined,
+      gyroZ: rr?.alpha ?? null,
       t: this.now(),
     })
   }
