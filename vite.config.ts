@@ -13,5 +13,8 @@ export default defineConfig({
     // Expose on the LAN so a phone on the same Wi-Fi can open the dev server.
     // Note: phones only grant geolocation/motion over HTTPS (see README).
     host: true,
+    // allow HTTPS tunnel hostnames (cloudflared / ngrok) for testing on a phone
+    allowedHosts: true,
   },
+  preview: { host: true, allowedHosts: true },
 })
