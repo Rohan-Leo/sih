@@ -17,6 +17,7 @@ Measurements (each optional per step)
   NHC centripetal:  a_lat = v·(ω − b_ω)   (no sideways slip ⇒ speed observable in turns)
   ZUPT:             v = 0 while stationary
   Learned speed:    v = v̂ (SpeedNet), with the network's own variance
+  Learned bias:     b_ω = −δ̂ (HeadingNet), with the network's own variance
 """
 from __future__ import annotations
 
@@ -128,6 +129,10 @@ class UKF:
 
     def zupt(self):
         self.update(np.array([0.0]), lambda X: X[:, 3:4], np.array([[0.05**2]]))
+
+    def gyro_bias_obs(self, b: float, var: float):
+        """Learned gyro yaw-rate bias (HeadingNet) as a direct measurement of b_ω."""
+        self.update(np.array([b]), lambda X: X[:, 4:5], np.array([[var]]))
 
     def speed_obs(self, v: float, var: float):
         self.update(np.array([v]), lambda X: X[:, 3:4], np.array([[var]]))

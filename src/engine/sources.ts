@@ -14,6 +14,8 @@ export interface DeadZone {
   from: number
   to: number
   label: string
+  /** 'outage' withholds GNSS (default); 'fault' keeps fixes coming but corrupts them (multipath) */
+  kind?: 'outage' | 'fault'
 }
 
 /** A timed sensor feed for Demo mode (synthetic route or recorded drive). */

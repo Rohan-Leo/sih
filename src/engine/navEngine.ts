@@ -13,7 +13,7 @@ import { LiveSource, type LiveStatus } from './liveSource'
 import { ReplaySource } from './replaySource'
 import type { DeadZone, ScriptedSource, SensorSink } from './sources'
 import { LearnedEstimator } from '../ml/learnedEstimator'
-import { SpeedNet } from '../ml/speednet'
+import { loadModels } from '../ml/models'
 import demoData from '../demo/demoRoute.json'
 import { buildTimeline } from '../demo/timeline.js'
 
@@ -165,10 +165,11 @@ export class NavEngine {
     this.live = new LiveSource(() => (this.dirty = true))
     this.lastEst = this.estimator.tick(0)
     this.snapshot = this.buildSnapshot()
-    SpeedNet.load(ML_BASE)
-      .then((net) => {
-        this.estimator.net = net
+    loadModels(ML_BASE)
+      .then(({ models, missing }) => {
+        this.estimator.models = models
         this.dirty = true
+        if (missing.length) this.addLog('warn', `Models not loaded: ${missing.join(', ')} — running without them`)
       })
       .catch(() => this.addLog('warn', 'Speed model failed to load — using the heuristic fallback'))
     this.estimator.onEvent((e) => {

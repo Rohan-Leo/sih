@@ -1,0 +1,27 @@
+{
+  "channels": [
+    "yaw_rate",
+    "a_long",
+    "a_lat",
+    "a_vert",
+    "acc_mag",
+    "gyro_mag",
+    "v_turn",
+    "turning"
+  ],
+  "window": 100,
+  "hz": 10,
+  "task": "heading",
+  "train_windows": 86584,
+  "val": {
+    "yaw_rmse_calibrated_gyro": 0.022757714614272118,
+    "yaw_rmse_headingnet": 0.017047511413693428,
+    "within_1sigma": 0.7305792011429252
+  },
+  "test": {
+    "yaw_rmse_calibrated_gyro": 0.02003360167145729,
+    "yaw_rmse_headingnet": 0.01869342476129532,
+    "within_1sigma": 0.7789382905327712
+  },
+  "var_scale": 0.8333308100700378
+}

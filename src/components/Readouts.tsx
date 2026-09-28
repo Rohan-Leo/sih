@@ -13,6 +13,17 @@ function Cell({ label, value, unit, accent }: { label: string; value: string; un
   )
 }
 
+function MlChip({ label, value, accent, title }: { label: string; value: string; accent?: string; title: string }) {
+  return (
+    <span className="inline-flex items-baseline gap-1.5" title={title}>
+      <span className="label">{label}</span>
+      <span className="num" style={accent ? { color: accent } : undefined}>
+        {value}
+      </span>
+    </span>
+  )
+}
+
 export default function Readouts({ snap }: { snap: Snapshot }) {
   const e = snap.est
   const dr = e.mode === 'DR'
@@ -49,6 +60,23 @@ export default function Readouts({ snap }: { snap: Snapshot }) {
         </span>
         <span className="min-w-0 text-muted">{e.engineNote}</span>
       </div>
+      {e.ml && (
+        <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[11.5px] leading-snug">
+          <MlChip label="Driving" value={e.ml.driving ? e.ml.driving.toUpperCase() : '—'} title="MotionNet: driving state over the last second" />
+          <MlChip
+            label="GNSS trust"
+            value={e.ml.gnssTrust !== null ? `${Math.round(e.ml.gnssTrust * 100)}%` : '—'}
+            accent={e.ml.gnssTrust !== null && e.ml.gnssTrust < 0.5 ? 'var(--warn)' : undefined}
+            title="IntegrityNet: how consistent the latest fix is with the IMU"
+          />
+          {e.ml.headingCorr !== null && (
+            <MlChip label="Gyro err" value={`${e.ml.headingCorr >= 0 ? '+' : ''}${e.ml.headingCorr.toFixed(2)}°/s`} title="HeadingNet: estimated gyro yaw-rate error over the last 10 s" />
+          )}
+          {e.ml.radius95 !== null && (
+            <MlChip label="95% within" value={`${Math.round(e.ml.radius95)} m`} accent="var(--thread)" title="DriftNet: 95 % error radius" />
+          )}
+        </div>
+      )}
     </div>
   )
 }

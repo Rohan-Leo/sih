@@ -15,6 +15,8 @@ export interface ReplayManifest {
   columns: string[]
   origin: [number, number]
   deadZones: { from: number; to: number; label: string }[]
+  /** GNSS keeps reporting ±4 m but positions are pulled off the road (multipath) */
+  faultZones?: { from: number; to: number; label: string; offset: [number, number]; driftPerS: [number, number] }[]
   calibrationSamples: number
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   osrm: any
@@ -31,7 +33,7 @@ export class ReplaySource implements ScriptedSource {
   private truth: LngLat[]
   private next = 0
   private manualUntil = -Infinity
-  private zoneSamples: { from: number; to: number; zone: DeadZone }[]
+  private zoneSamples: { from: number; to: number; zone: DeadZone; offset?: [number, number]; drift?: [number, number] }[]
   private readonly period: number
 
   constructor(
@@ -43,10 +45,16 @@ export class ReplaySource implements ScriptedSource {
     this.duration = (manifest.samples - 1) * this.period
     this.truth = Array.from({ length: manifest.samples }, (_, i) => this.lngLat(this.v(i, 'truth_e'), this.v(i, 'truth_n')))
     this.path = new Polyline(this.truth)
-    this.zoneSamples = manifest.deadZones.map((z) => {
-      const zone = { from: this.path.cum[z.from], to: this.path.cum[Math.min(z.to, manifest.samples - 1)], label: z.label }
-      return { from: z.from, to: z.to, zone }
+    const span = (z: { from: number; to: number; label: string }, kind: 'outage' | 'fault'): DeadZone => ({
+      from: this.path.cum[z.from],
+      to: this.path.cum[Math.min(z.to, manifest.samples - 1)],
+      label: z.label,
+      kind,
     })
+    this.zoneSamples = [
+      ...manifest.deadZones.map((z) => ({ from: z.from, to: z.to, zone: span(z, 'outage') })),
+      ...(manifest.faultZones ?? []).map((z) => ({ from: z.from, to: z.to, zone: span(z, 'fault'), offset: z.offset, drift: z.driftPerS })),
+    ]
     this.deadZones = this.zoneSamples.map((z) => z.zone)
   }
 
@@ -93,7 +101,17 @@ export class ReplaySource implements ScriptedSource {
   }
 
   gnssWithheld(t: number): boolean {
-    return t < this.manualUntil || this.deadZoneAt(t) !== null
+    if (t < this.manualUntil) return true
+    const z = this.deadZoneAt(t)
+    return z !== null && z.kind !== 'fault'
+  }
+
+  /** Multipath offset (east, north metres) applied to fixes inside a fault zone. */
+  private faultOffset(i: number): [number, number] | null {
+    const z = this.zoneSamples.find((q) => q.offset && i >= q.from && i < q.to)
+    if (!z) return null
+    const s = (i - z.from) / this.manifest.hz
+    return [z.offset![0] + z.drift![0] * s, z.offset![1] + z.drift![1] * s]
   }
 
   toggleManualOutage(now: number, ms = 20000) {
@@ -123,7 +141,8 @@ export class ReplaySource implements ScriptedSource {
         t: ts,
       })
       if (this.v(i, 'gnss_fresh') > 0.5 && !this.gnssWithheld(ts)) {
-        const [lon, lat] = this.lngLat(this.v(i, 'gnss_e'), this.v(i, 'gnss_n'))
+        const off = this.faultOffset(i) ?? [0, 0]
+        const [lon, lat] = this.lngLat(this.v(i, 'gnss_e') + off[0], this.v(i, 'gnss_n') + off[1])
         sink.pushFix({ lon, lat, accuracy: 4, speed: this.v(i, 'gnss_speed'), course: this.v(i, 'gnss_course'), t: ts })
       }
     }

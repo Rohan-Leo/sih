@@ -131,6 +131,20 @@ export interface EstimatorState {
   blending: boolean
   engine: EngineName
   engineNote: string
+  /** outputs of the learned models, when the learned engine is running */
+  ml: MlInfo | null
+}
+
+export interface MlInfo {
+  /** MotionNet: what the vehicle is doing over the last second */
+  driving: string | null
+  drivingP: number | null
+  /** IntegrityNet: 1 − P(fault) of the latest GNSS fix */
+  gnssTrust: number | null
+  /** DriftNet: 95 % error radius while dead reckoning, metres */
+  radius95: number | null
+  /** HeadingNet: estimated gyro yaw-rate error (true − calibrated), deg/s */
+  headingCorr: number | null
 }
 
 export interface EstimatorEvent {
@@ -258,18 +272,20 @@ export class PositionEstimator {
       this.cfg.accuracyHard,
       Math.max(this.cfg.accuracyFloor, baseline !== null ? baseline * this.cfg.accuracyRatio : Infinity),
     )
-    if (!(fix.accuracy <= limit)) {
+    const rejected = !(fix.accuracy <= limit)
+      ? {
+          reason: `accuracy degraded to ±${Math.round(fix.accuracy)} m`,
+          message: `GNSS accuracy degraded to ±${Math.round(fix.accuracy)} m (baseline ±${Math.round(baseline ?? 0)} m) — fix rejected`,
+        }
+      : this.rejectFix(fix)
+    if (rejected) {
       // Degraded: do not refresh the "good fix" clock. If it stays degraded
       // for staleMs, we fall into dead reckoning exactly like a lost signal.
       if (!this.degradedLogged) {
         this.degradedLogged = true
-        this.emit({
-          kind: 'degraded',
-          t: fix.t,
-          message: `GNSS accuracy degraded to ±${Math.round(fix.accuracy)} m (baseline ±${Math.round(baseline ?? 0)} m) — fix rejected`,
-        })
+        this.emit({ kind: 'degraded', t: fix.t, message: rejected.message })
       }
-      this.degradedReason = `accuracy degraded to ±${Math.round(fix.accuracy)} m`
+      this.degradedReason = rejected.reason
       return
     }
 
@@ -492,6 +508,16 @@ export class PositionEstimator {
     return Math.min(300, this.sigmaAtLoss + 0.4 * outageS + (this.snapped ? 0.05 : 0.12) * this.drDistance)
   }
 
+  /** Hook for subclasses: a reason to reject a fix whose reported accuracy looks fine. */
+  protected rejectFix(_fix: GnssFix): { reason: string; message: string } | null {
+    return null
+  }
+
+  /** Hook for subclasses: learned-model outputs for the UI. */
+  protected mlInfo(): MlInfo | null {
+    return null
+  }
+
   /** Hook for subclasses, called once when dead reckoning starts. */
   protected onEnterDeadReckoning(_t: number): void {}
 
@@ -659,6 +685,7 @@ export class PositionEstimator {
       snapped: this.drActive && this.snapped,
       blending: this.blend !== null,
       ...this.engineInfo(),
+      ml: this.mlInfo(),
     }
   }
 

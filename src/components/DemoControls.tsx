@@ -71,8 +71,11 @@ export default function DemoControls({ demo, engine, compact = false }: { demo: 
               style={{
                 left: `${(z.from / demo.pathLength) * 100}%`,
                 width: `${((z.to - z.from) / demo.pathLength) * 100}%`,
-                backgroundImage: 'repeating-linear-gradient(135deg, var(--ink) 0 1px, transparent 1px 4px)',
-                opacity: 0.45,
+                backgroundImage:
+                  z.kind === 'fault'
+                    ? 'repeating-linear-gradient(45deg, var(--warn) 0 2px, transparent 2px 4px)'
+                    : 'repeating-linear-gradient(135deg, var(--ink) 0 1px, transparent 1px 4px)',
+                opacity: z.kind === 'fault' ? 0.7 : 0.45,
               }}
             />
           ))}

@@ -14,6 +14,8 @@ import argparse
 import json
 import os
 
+from multiprocessing import Pool
+
 import numpy as np
 import torch
 
@@ -38,6 +40,7 @@ METHODS = {
     "ukf_nhc_zupt": "UKF, non-holonomic model + ZUPT (no ML)",
     "ukf_ml_raw": "UKF + ZUPT + learned speed, no bias correction",
     "ukf_full": "UKF + ZUPT + learned speed + online bias correction (Clew)",
+    "ukf_full_hd": "Clew + HeadingNet gyro-bias measurement",
     "ukf_full_mm": "Clew + HMM map matching (OSM roads)",
 }
 
@@ -77,7 +80,7 @@ def predict_speed(model: SpeedNet, feats: np.ndarray) -> tuple[np.ndarray, np.nd
 class Signals:
     """Everything the filters consume at runtime (all causal)."""
 
-    def __init__(self, d: Drive, model: SpeedNet, still_thr: float):
+    def __init__(self, d: Drive, model: SpeedNet, still_thr: float, heading=None):
         feats, calib = drive_features(d)
         s = calib.signals(d)
         # the centripetal pseudo-measurement is only as good as the lateral mount calibration
@@ -89,6 +92,23 @@ class Signals:
         self.still_heur = (causal_std(s["acc_mag"], 20) < still_thr) & (np.abs(self.omega_s) < 0.02)
         self.v_hat, self.v_var, p = predict_speed(model, feats)
         self.still_ml = p > 0.8
+        # HeadingNet yaw correction, predicted at 1 Hz and held for the next second
+        self.dpsi = np.full(len(feats), np.nan)
+        self.dpsi_var = np.full(len(feats), np.nan)
+        if heading is not None:
+            self.dpsi, self.dpsi_var = predict_heading(heading, feats)
+
+
+def predict_heading(model, feats: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+    """HeadingNet δ̂ (rad/s) and its variance on 1 Hz ticks (t % 10 == 0); NaN elsewhere."""
+    T = len(feats)
+    ticks = np.arange(WINDOW, T, 10)
+    with torch.no_grad():
+        o = model(torch.tensor(windows(feats, ticks))).numpy()
+    d, v = np.full(T, np.nan), np.full(T, np.nan)
+    d[ticks] = o[:, 0] * 0.1
+    v[ticks] = np.exp(np.clip(o[:, 1], -12, 2)) * float(model.var_scale[0])
+    return d, v
 
 
 def fit_still_threshold(drives: list[Drive]) -> float:
@@ -149,7 +169,13 @@ class SpeedCorrector:
         return self.k * v_hat, max(resid_var, 1.0) * 2.0
 
 
-def aid(u: UKF, sg: Signals, t: int, use_nhc: bool, zupt: np.ndarray | None, use_speed: bool, corr: "SpeedCorrector | None" = None):
+HEADING_VAR_INFLATE = 4.0  # 1 Hz predictions from overlapping windows are correlated
+
+
+def aid(u: UKF, sg: Signals, t: int, use_nhc: bool, zupt: np.ndarray | None, use_speed: bool, corr: "SpeedCorrector | None" = None, use_heading: bool = False):
+    if use_heading and np.isfinite(sg.dpsi[t]):
+        # HeadingNet: δ = true − calibrated yaw rate over the last 10 s, i.e. the gyro bias is −δ
+        u.gyro_bias_obs(-float(sg.dpsi[t]), float(sg.dpsi_var[t]) * HEADING_VAR_INFLATE)
     if use_nhc and sg.nhc_ok and abs(sg.omega_s[t]) > 0.05:
         u.nhc_centripetal(sg.a_lat_s[t], sg.omega_s[t])
     if zupt is not None and zupt[t]:
@@ -188,6 +214,8 @@ def run_outage(method: str, u0: UKF, sg: Signals, s: int, graph: RoadGraph | Non
             aid(u, sg, t, True, sg.still_ml, True)
         elif method in ("ukf_full", "ukf_full_mm"):
             aid(u, sg, t, True, sg.still_ml, True, corr)
+        elif method == "ukf_full_hd":
+            aid(u, sg, t, True, sg.still_ml, True, corr, use_heading=True)
         if hmm and k % 10 == 9:
             sigma = float(np.sqrt(np.linalg.eigvalsh(u.P[:2, :2]).max()))
             c = hmm.step(u.x[:2], sigma, travelled)
@@ -199,8 +227,8 @@ def run_outage(method: str, u0: UKF, sg: Signals, s: int, graph: RoadGraph | Non
     return out
 
 
-def evaluate_segment(d: Drive, model: SpeedNet, still_thr: float) -> list[dict]:
-    sg = Signals(d, model, still_thr)
+def evaluate_segment(d: Drive, model: SpeedNet, still_thr: float, heading=None) -> list[dict]:
+    sg = Signals(d, model, still_thr, heading)
     roads = load_roads(d)
     graph = RoadGraph(roads) if roads else None
     t0 = CALIB_END
@@ -212,20 +240,27 @@ def evaluate_segment(d: Drive, model: SpeedNet, still_thr: float) -> list[dict]:
     for t in range(WINDOW, t0):  # calibration period: GNSS is healthy, learn the model's bias
         if d.gnss_fresh[t]:
             corr.observe(d.gnss_speed[t], sg.v_hat[t])
+    # HeadingNet runs in its own GNSS-aided filter the whole time (as in the app)
+    u_hd = u.copy() if heading is not None else None
     for t in range(t0 + 1, d.T - OUTAGE):
         u.predict(sg.omega[t], sg.a_long[t], DT)
         aid(u, sg, t, True, sg.still_ml, True, corr)
+        if u_hd is not None:
+            u_hd.predict(sg.omega[t], sg.a_long[t], DT)
+            aid(u_hd, sg, t, True, sg.still_ml, True, corr, use_heading=True)
         if d.gnss_fresh[t]:
             u.gnss(*d.gnss_en[t], d.gnss_acc[t], d.gnss_speed[t], d.gnss_course[t])
+            if u_hd is not None:
+                u_hd.gnss(*d.gnss_en[t], d.gnss_acc[t], d.gnss_speed[t], d.gnss_course[t])
             corr.observe(d.gnss_speed[t], sg.v_hat[t])
         if t in starts and d.truth_speed[t] > 2:
             truth = d.truth_en[t + 1 : t + 1 + OUTAGE]
             dist = np.r_[0, np.cumsum(np.linalg.norm(np.diff(truth, axis=0), axis=1))]
             row = {"segment": d.name, "t": t, "speed": float(d.truth_speed[t])}
             for m in METHODS:
-                if m == "ukf_full_mm" and graph is None:
+                if (m == "ukf_full_mm" and graph is None) or (m == "ukf_full_hd" and heading is None):
                     continue
-                path = run_outage(m, u, sg, t + 1, graph, corr.copy())
+                path = run_outage(m, u_hd if m == "ukf_full_hd" else u, sg, t + 1, graph, corr.copy())
                 err = np.linalg.norm(path - truth, axis=1)
                 for h in HORIZONS_S:
                     i = int(h / DT) - 1
@@ -279,9 +314,15 @@ def main():
     model = load_model()
     thr = fit_still_threshold([d for d in drives if split_of(d.name) == "train"])
     segs = [d for d in drives if split_of(d.name) == args.split]
+    heading = None
+    if os.path.exists(os.path.join(ART, "headingnet.pt")):
+        from .imu_models import load as load_imu
+
+        heading = load_imu("headingnet")
+    with Pool(min(4, os.cpu_count() or 1)) as p:
+        per_seg = p.starmap(evaluate_segment, [(d, model, thr, heading) for d in segs])
     rows = []
-    for d in segs:
-        r = evaluate_segment(d, model, thr)
+    for d, r in zip(segs, per_seg):
         rows += r
         if r:
             print(f"{d.name:32s} {len(r):3d} outages  clew@60s median {np.median([x['ukf_full@60'] for x in r]):6.1f} m   hold {np.median([x['hold@60'] for x in r]):6.1f} m")

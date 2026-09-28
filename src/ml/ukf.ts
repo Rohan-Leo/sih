@@ -172,6 +172,11 @@ export class UKF {
     this.update([v], (p) => [p[3]], [[variance]])
   }
 
+  /** Learned gyro yaw-rate bias (HeadingNet) as a direct measurement of b_ω. */
+  gyroBiasObs(b: number, variance: number) {
+    this.update([b], (p) => [p[4]], [[variance]])
+  }
+
   position(E: number, Nn: number, sigma: number) {
     this.update([E, Nn], (p) => [p[0], p[1]], [[sigma * sigma, 0], [0, sigma * sigma]])
   }

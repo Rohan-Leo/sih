@@ -14,13 +14,37 @@ type V3 = [number, number, number]
 class RidgeStats {
   xtx = [0, 0, 0, 0, 0, 0, 0, 0, 0]
   xty = [0, 0, 0]
+  sx = [0, 0, 0]
+  sy = 0
+  syy = 0
   n = 0
   add(x: V3, y: number) {
     for (let i = 0; i < 3; i++) {
       this.xty[i] += x[i] * y
+      this.sx[i] += x[i]
       for (let j = 0; j < 3; j++) this.xtx[i * 3 + j] += x[i] * x[j]
     }
+    this.sy += y
+    this.syy += y * y
     this.n++
+  }
+  /** In-sample R² of the fit w (same definition as calib.py: 1 − var(resid)/var(y)). */
+  r2(w: V3): number {
+    if (this.n < 20) return 0
+    const n = this.n
+    let wXty = 0
+    let wXXw = 0
+    let wx = 0
+    for (let i = 0; i < 3; i++) {
+      wXty += w[i] * this.xty[i]
+      wx += w[i] * this.sx[i]
+      for (let j = 0; j < 3; j++) wXXw += w[i] * this.xtx[i * 3 + j] * w[j]
+    }
+    const my = this.sy / n
+    const varY = this.syy / n - my * my
+    const mr = my - wx / n
+    const varR = (this.syy - 2 * wXty + wXXw) / n - mr * mr
+    return 1 - varR / Math.max(varY, 1e-12)
   }
   solve(lam = 1e-4): V3 {
     if (this.n <= 20) return [0, 0, 0]
@@ -53,6 +77,9 @@ export interface MountCalib {
   wYaw: V3
   uFwd: V3
   uLat: V3
+  /** in-sample fit quality of each regression */
+  r2Yaw: number
+  r2Long: number
 }
 
 export class OnlineMountCalibrator {
@@ -108,7 +135,9 @@ export class OnlineMountCalibrator {
     this.dynSum = [0, 0, 0]
     this.count = 0
     if (this.long.n >= this.targetIntervals) {
-      this.result = { wYaw: this.yaw.solve(), uFwd: this.long.solve(), uLat: this.lat.solve() }
+      const wYaw = this.yaw.solve()
+      const uFwd = this.long.solve()
+      this.result = { wYaw, uFwd, uLat: this.lat.solve(), r2Yaw: this.yaw.r2(wYaw), r2Long: this.long.r2(uFwd) }
     }
   }
 }

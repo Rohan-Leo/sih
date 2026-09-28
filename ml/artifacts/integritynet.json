@@ -1,0 +1,92 @@
+{
+  "features": [
+    "log_innov_m",
+    "log_innov_norm",
+    "log_acc",
+    "acc_ratio",
+    "log_speed_resid",
+    "course_resid",
+    "log_implied_resid",
+    "dt_since_good",
+    "speed"
+  ],
+  "train_fixes": 50586,
+  "val": {
+    "n_fixes": 9803,
+    "faulty_share": 0.1625012755393982,
+    "auc": 0.9976927835161903,
+    "integritynet": {
+      "precision": 0.9553072625698324,
+      "recall": 0.9661016949152542,
+      "f1": 0.9606741573033708,
+      "good_fixes_rejected": 0.00876979293544458
+    },
+    "accuracy threshold (previous app rule)": {
+      "precision": 1.0,
+      "recall": 0.04268675455116133,
+      "f1": 0.08187838651414811,
+      "good_fixes_rejected": 0.0
+    },
+    "innovation gate (5\u03c3, UKF-style)": {
+      "precision": 0.9838187702265372,
+      "recall": 0.38166980539861894,
+      "f1": 0.5499773857982814,
+      "good_fixes_rejected": 0.001218026796589525
+    }
+  },
+  "test": {
+    "n_fixes": 6333,
+    "faulty_share": 0.16864044964313507,
+    "auc": 0.9948810425714296,
+    "integritynet": {
+      "precision": 0.9384902143522833,
+      "recall": 0.9428838951310862,
+      "f1": 0.9406819243344231,
+      "good_fixes_rejected": 0.012535612535612535
+    },
+    "accuracy threshold (previous app rule)": {
+      "precision": 0.9487179487179487,
+      "recall": 0.03464419475655431,
+      "f1": 0.06684733514001807,
+      "good_fixes_rejected": 0.0003798670465337132
+    },
+    "innovation gate (5\u03c3, UKF-style)": {
+      "precision": 0.9642857142857143,
+      "recall": 0.22752808988764045,
+      "f1": 0.36818181818181817,
+      "good_fixes_rejected": 0.0017094017094017094
+    }
+  },
+  "test_by_fault": {
+    "clean": {
+      "n": 5143,
+      "flagged": 0.00699980556095664,
+      "truly_bad": 0.0
+    },
+    "jump": {
+      "n": 354,
+      "flagged": 0.9661016949152542,
+      "truly_bad": 1.0
+    },
+    "drift": {
+      "n": 240,
+      "flagged": 0.6666666666666666,
+      "truly_bad": 0.7708333134651184
+    },
+    "noise": {
+      "n": 360,
+      "flagged": 0.9277777777777778,
+      "truly_bad": 0.8999999761581421
+    },
+    "frozen": {
+      "n": 89,
+      "flagged": 0.8876404494382022,
+      "truly_bad": 0.9101123809814453
+    },
+    "speed": {
+      "n": 147,
+      "flagged": 0.8299319727891157,
+      "truly_bad": 0.8435373902320862
+    }
+  }
+}
