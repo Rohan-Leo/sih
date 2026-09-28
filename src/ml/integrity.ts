@@ -70,6 +70,17 @@ export class FixChecker {
   get secondsSinceTrusted(): number {
     return this.dtGood
   }
+
+  clone(): FixChecker {
+    const c = Object.assign(Object.create(FixChecker.prototype), this) as FixChecker
+    Object.assign(c, {
+      pred: [...this.pred],
+      prev: this.prev ? [...this.prev] : null,
+      accs: [...this.accs],
+      corr: Object.assign(new SpeedCorrector(), this.corr),
+    })
+    return c
+  }
 }
 
 export class IntegrityNet {

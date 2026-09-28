@@ -155,13 +155,23 @@ export class UKF {
     return true
   }
 
-  gnss(E: number, Nn: number, acc: number, speed: number | null, courseDeg: number | null) {
+  /** Returns false if the position was rejected by the innovation gate. */
+  gnss(E: number, Nn: number, acc: number, speed: number | null, courseDeg: number | null): boolean {
     const r = Math.max(acc, 2) ** 2
-    this.update([E, Nn], (p) => [p[0], p[1]], [[r, 0], [0, r]], [], 25)
+    const ok = this.update([E, Nn], (p) => [p[0], p[1]], [[r, 0], [0, r]], [], 25)
     if (speed !== null) this.update([speed], (p) => [p[3]], [[0.09]])
     if (courseDeg !== null && speed !== null && speed > 3) {
       this.update([(courseDeg * Math.PI) / 180], (p) => [p[2]], [[(3 * Math.PI / 180) ** 2]], [0])
     }
+    return ok
+  }
+
+  /** Restart at a position, keeping the learned gyro and accelerometer biases. */
+  reinit(E: number, Nn: number, psi: number, v: number) {
+    const [bw, ba] = [this.x[4], this.x[5]]
+    this.init(E, Nn, psi, v)
+    this.x[4] = bw
+    this.x[5] = ba
   }
 
   zupt() {

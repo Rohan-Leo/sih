@@ -46,7 +46,7 @@ for (const learned of [true, false]) {
       if (s.ml.radius95 !== null) ml.r95.push([err, s.ml.radius95])
     }
   }
-  console.log(`\n=== ${learned ? 'LEARNED (UKF + SpeedNet)' : 'HEURISTIC'} — ${((performance.now() - t0) / 1000).toFixed(1)} s CPU for ${(src.duration / 60000).toFixed(0)} min of drive`)
+  console.log(`\n=== ${learned ? 'LEARNED (UKF + 5 models)' : 'HEURISTIC'} — ${((performance.now() - t0) / 1000).toFixed(1)} s CPU for ${(src.duration / 60000).toFixed(0)} min of drive`)
   log.forEach((l) => console.log(l))
   for (const [k, v] of Object.entries(errs)) console.log(`${k}: error at end ${v[v.length - 1].toFixed(1)} m, max ${Math.max(...v).toFixed(1)} m over ${(v.length * 0.05).toFixed(0)} s`)
   if (learned) {

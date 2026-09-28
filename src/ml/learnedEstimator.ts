@@ -49,6 +49,11 @@ const D2R = Math.PI / 180
 const FAULT_THRESHOLD = 0.5
 /** after this long without a trusted fix, accept fixes again (the model is advisory, never a lock-out) */
 const TRUST_OVERRIDE_S = 45
+/** a fix trusted after this long a gap is provisional: it can be rolled back if the next fixes disagree */
+const PROVISIONAL_GAP_S = 10
+const PROVISIONAL_WINDOW_S = 5
+/** consecutive trusted fixes the UKF gates out before it is restarted at the fix */
+const UKF_MAX_GATED = 3
 /** HeadingNet predictions from overlapping windows are correlated (evaluate.HEADING_VAR_INFLATE) */
 const HEADING_VAR_INFLATE = 4
 
@@ -91,6 +96,9 @@ export class LearnedEstimator extends PositionEstimator {
   private heading: { delta: number; variance: number } | null = null
   private driving: { state: DrivingState; p: number } | null = null
   private checker = new FixChecker()
+  /** the checker as it was before a provisional re-anchor, kept running for a few seconds */
+  private fallback: { checker: FixChecker; until: number } | null = null
+  private ukfGated = 0
   private trust: number | null = null
   private tracker: OutageTracker | null = null
   private radii: DriftRadii | null = null
@@ -132,6 +140,8 @@ export class LearnedEstimator extends PositionEstimator {
     this.heading = null
     this.driving = null
     this.checker = new FixChecker()
+    this.fallback = null
+    this.ukfGated = 0
     this.trust = null
     this.tracker = null
     this.radii = null
@@ -199,20 +209,49 @@ export class LearnedEstimator extends PositionEstimator {
     const speed = fix.speed ?? this.gnssSpeed
     const course = fix.course ?? this.gnssCourse ?? 0
     const vHat = this.pred?.speed ?? null
-    const f = this.checker.features(e, n, fix.t / 1000, fix.accuracy, speed, course, vHat)
+    const tS = fix.t / 1000
+    if (this.fallback && tS > this.fallback.until) this.fallback = null
+    const f = this.checker.features(e, n, tS, fix.accuracy, speed, course, vHat)
     let trusted = true
     let p = 0
     if (f) {
       p = integ.pFault(f)
+      trusted = p < FAULT_THRESHOLD || this.checker.secondsSinceTrusted > TRUST_OVERRIDE_S || this.ukfAgrees(e, n, fix.accuracy)
+      if (!trusted && this.fallback) {
+        // we re-anchored on a fix after a long gap and now disagree with everything after it:
+        // if the pre-anchor view accepts this fix, the anchor was the fault — roll back
+        const fb = this.fallback.checker.features(e, n, tS, fix.accuracy, speed, course, vHat)
+        const pb = fb ? integ.pFault(fb) : 1
+        if (pb < FAULT_THRESHOLD) {
+          this.checker = this.fallback.checker
+          this.fallback = null
+          p = pb
+          trusted = true
+        }
+      }
       this.trust = 1 - p
-      trusted = p < FAULT_THRESHOLD || this.checker.secondsSinceTrusted > TRUST_OVERRIDE_S
+      if (trusted && this.checker.secondsSinceTrusted > PROVISIONAL_GAP_S) {
+        this.fallback = { checker: this.checker.clone(), until: tS + PROVISIONAL_WINDOW_S }
+      }
     }
-    this.checker.afterFix(e, n, fix.t / 1000, fix.accuracy, speed, course, vHat, trusted)
+    this.checker.afterFix(e, n, tS, fix.accuracy, speed, course, vHat, trusted)
     if (trusted) return null
     return {
       reason: `IntegrityNet: fix inconsistent with the IMU (P fault ${(p * 100).toFixed(0)}%)`,
       message: `IntegrityNet rejected a GNSS fix that disagrees with the IMU dead reckoning (P fault ${(p * 100).toFixed(0)}%, reported ±${Math.round(fix.accuracy)} m)`,
     }
+  }
+
+  /**
+   * Second opinion for a flagged fix. The checker anchors on the last fix it trusted, so a
+   * single faulty fix that slipped through would make every good fix after it look wrong.
+   * The UKF gates its own GNSS updates, so when it agrees with the fix we re-anchor on it.
+   */
+  private ukfAgrees(e: number, n: number, accuracy: number): boolean {
+    const u = this.ukf
+    if (!u) return false
+    const d = Math.hypot(e - u.x[0], n - u.x[1])
+    return d < Math.min(40, 3 * Math.hypot(u.sigmaPos, Math.max(accuracy, 2)))
   }
 
   override pushFix(fix: GnssFix) {
@@ -229,7 +268,12 @@ export class LearnedEstimator extends PositionEstimator {
     }
     if (this.ukf) {
       const [e, n] = this.toEN(fix.lon, fix.lat)
-      this.ukf.gnss(e, n, fix.accuracy, speed, course)
+      // a trusted fix the filter keeps gating out means the filter is the one that's wrong
+      this.ukfGated = this.ukf.gnss(e, n, fix.accuracy, speed, course) ? 0 : this.ukfGated + 1
+      if (this.ukfGated >= UKF_MAX_GATED && course !== null) {
+        this.ukf.reinit(e, n, course * D2R, speed)
+        this.ukfGated = 0
+      }
       if (this.pred) this.corr.observe(speed, this.pred.speed)
     }
   }
@@ -284,6 +328,7 @@ export class LearnedEstimator extends PositionEstimator {
       }
     }
     this.checker.imuStep(yaw, this.pred?.speed ?? null)
+    this.fallback?.checker.imuStep(yaw, this.pred?.speed ?? null)
 
     const u = this.ukf
     if (!u) return
@@ -305,8 +350,7 @@ export class LearnedEstimator extends PositionEstimator {
       }
     }
     if (this.drActive && this.tracker) {
-      this.tracker.step(u.x[3], yaw, still)
-      if (tick && this.pred) this.tracker.speedObs(this.pred.variance)
+      this.tracker.step(u.x[3], yaw)
       if (tick && M?.drift) this.radii = M.drift.radii(this.tracker.features(u.x[2], u.sigmaPos))
     }
   }
@@ -318,8 +362,7 @@ export class LearnedEstimator extends PositionEstimator {
     this.tracker = null
     if (!this.ready) return
     const u = this.ukf!
-    const c = this.calib.result!
-    this.tracker = new OutageTracker(u.x[2], this.corr, c.r2Yaw, c.r2Long)
+    this.tracker = new OutageTracker(u.x[2])
     const p = this.toLngLat(u.x[0], u.x[1])
     // display starts where the dot was and eases onto the filter's estimate
     this.snapOffset = this.est ? [this.est[0] - p[0], this.est[1] - p[1]] : [0, 0]

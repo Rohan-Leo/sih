@@ -94,16 +94,41 @@ export default function AboutDrawer({ open, onClose }: { open: boolean; onClose:
                 </p>
                 <ul className="list-disc space-y-1 pl-5">
                   <li>online phone-mount calibration from the first ~5 min of driving with GNSS</li>
-                  <li>the speed network (PyTorch-trained, 51k parameters, run once per second)</li>
                   <li>a UKF with a non-holonomic motion model, zero-velocity updates and online speed-bias correction</li>
                 </ul>
+                <p>Around the filter sit five trained networks, each an encoder plus a task head:</p>
+                <ol className="list-decimal space-y-1 pl-5">
+                  <li>
+                    <strong className="font-medium">SpeedNet</strong> — speed, its uncertainty and a stationary flag from
+                    10 s of IMU. Outage error after 60 s: <span className="num">80 m</span>, against{' '}
+                    <span className="num">143 m</span> integrating the IMU alone, <span className="num">335 m</span>{' '}
+                    holding the last speed and heading, and <span className="num">490 m</span> for a frozen dot.
+                  </li>
+                  <li>
+                    <strong className="font-medium">IntegrityNet</strong> — flags GNSS fixes that disagree with the IMU
+                    (multipath jumps, drifts, frozen fixes). F1 <span className="num">0.94</span>, against{' '}
+                    <span className="num">0.37</span> for a Kalman innovation gate.
+                  </li>
+                  <li>
+                    <strong className="font-medium">DriftNet</strong> — the halo: how far off the dead-reckoned dot is
+                    likely to be. Its 68 % and 95 % radii held <span className="num">67 %</span> and{' '}
+                    <span className="num">93 %</span> of true errors on unseen drives.
+                  </li>
+                  <li>
+                    <strong className="font-medium">MotionNet</strong> — stationary, cruising, accelerating, braking or
+                    turning. Macro-F1 <span className="num">0.65</span>, against <span className="num">0.56</span> for
+                    hand-tuned rules.
+                  </li>
+                  <li>
+                    <strong className="font-medium">HeadingNet</strong> — estimates the gyro&apos;s yaw-rate error. It
+                    predicts it better than the raw calibration, but didn&apos;t reduce outage error, so it is shown and
+                    not fed to the filter.
+                  </li>
+                </ol>
                 <p>
-                  On 2.9 h of held-out IO-VNBD drives, its median error after 60 s without GNSS was{' '}
-                  <span className="num">81 m</span>. For comparison: <span className="num">135 m</span> integrating the
-                  IMU alone, <span className="num">326 m</span> holding the last speed and heading, and{' '}
-                  <span className="num">490 m</span> for a frozen dot. It is a research prototype, not production-grade:
-                  errors of tens to hundreds of metres are normal over a long outage, which is what the growing halo
-                  shows.
+                  All numbers are from IO-VNBD drives the models never trained on. It is a research prototype, not
+                  production-grade: errors of tens to hundreds of metres are normal over a long outage, which is what
+                  the growing halo shows.
                 </p>
                 <p>
                   <strong className="font-medium">Heuristic engine</strong> — the fallback while the mount calibrates,
@@ -129,11 +154,15 @@ export default function AboutDrawer({ open, onClose }: { open: boolean; onClose:
                   </li>
                   <li className="flex items-center gap-3">
                     <svg width="36" height="12"><circle cx="18" cy="6" r="5" fill="var(--fused-soft)" stroke="var(--fused)" strokeDasharray="2 2" /></svg>
-                    Uncertainty halo (1-σ), grows during dead reckoning
+                    Uncertainty halo — DriftNet&apos;s 68 % radius while dead reckoning
                   </li>
                   <li className="flex items-center gap-3">
                     <svg width="36" height="10"><path d="M0 5h36" stroke="var(--ink)" strokeOpacity="0.55" strokeWidth="6" strokeDasharray="3 3" /></svg>
                     Demo dead zone (GNSS withheld)
+                  </li>
+                  <li className="flex items-center gap-3">
+                    <svg width="36" height="10"><path d="M0 5h36" stroke="var(--warn)" strokeOpacity="0.7" strokeWidth="6" strokeDasharray="2 2" /></svg>
+                    Demo multipath episode (fixes arrive, but wrong)
                   </li>
                   <li className="flex items-center gap-3">
                     <svg width="36" height="6"><path d="M0 3h36" stroke="var(--ink)" strokeOpacity="0.5" strokeDasharray="1 3" /></svg>

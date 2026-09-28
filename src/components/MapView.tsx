@@ -32,6 +32,7 @@ function ensureOverlay(map: maplibregl.Map) {
   const fused = cssVar('--fused') || '#2F7A78'
   const ink = cssVar('--ink') || '#1B2430'
   const paper = cssVar('--paper') || '#F4EFE6'
+  const warn = cssVar('--warn') || '#B7791F'
 
   const src = (id: string) => {
     if (!map.getSource(id)) map.addSource(id, { type: 'geojson', data: EMPTY })
@@ -65,8 +66,9 @@ function ensureOverlay(map: maplibregl.Map) {
     source: 'deadzones',
     layout: { 'line-cap': 'butt' },
     paint: {
-      'line-color': ink,
-      'line-opacity': 0.55,
+      // GNSS outages in ink; multipath episodes (fixes keep coming, but wrong) in the warning colour
+      'line-color': ['match', ['get', 'kind'], 'fault', warn, ink],
+      'line-opacity': ['match', ['get', 'kind'], 'fault', 0.7, 0.55],
       'line-width': ['interpolate', ['linear'], ['zoom'], 10, 4, 16, 13],
       'line-dasharray': [0.35, 0.35],
     },
@@ -377,6 +379,7 @@ function pushStatic(map: maplibregl.Map, snap: Snapshot, _engine: NavEngine) {
             lineFeature(line.slice((z.from / snap.demo!.pathLength) * line.length, (z.to / snap.demo!.pathLength) * line.length), {
               label: z.label,
               short: z.label.split('—')[0].trim().toUpperCase(),
+              kind: z.kind ?? 'outage',
             }),
           )
         : [],

@@ -13,11 +13,6 @@ export class SpeedCorrector {
     return this.sxx > 50 ? Math.min(2.5, Math.max(0.5, this.sxy / this.sxx)) : 1
   }
 
-  /** RMS residual of the fit (m/s), or null before it has enough data. */
-  get residual(): number | null {
-    return this.n >= 20 ? Math.sqrt(this.sr / this.n) : null
-  }
-
   observe(vGnss: number, vHat: number) {
     if (!Number.isFinite(vHat) || vGnss < 1) return
     const f = 0.992
@@ -31,9 +26,5 @@ export class SpeedCorrector {
   measurement(vHat: number, modelVar: number): [number, number] {
     if (this.n < 20) return [vHat, Math.max(modelVar, 1) * 2]
     return [this.k * vHat, Math.max(this.sr / this.n, 1) * 2]
-  }
-
-  clone(): SpeedCorrector {
-    return Object.assign(new SpeedCorrector(), this)
   }
 }

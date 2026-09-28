@@ -4,9 +4,10 @@ Median horizontal error (m) after GNSS is lost; in brackets: median error as % o
 
 | Method | 10 s | 30 s | 60 s | 120 s |
 |---|---:|---:|---:|---:|
-| Freeze (typical map app: dot stops) | 90 (99.8%) | 235 (96.0%) | 403 (84.8%) | 703 (72.7%) |
-| Hold last GNSS speed & heading | 26 (23.9%) | 147 (61.3%) | 412 (82.8%) | 886 (89.0%) |
-| IMU integration only (UKF predict, no aiding) | 14 (16.8%) | 64 (25.8%) | 157 (30.6%) | 351 (30.8%) |
-| UKF, non-holonomic model + ZUPT (no ML) | 14 (16.9%) | 67 (26.8%) | 166 (35.6%) | 400 (37.9%) |
-| UKF + ZUPT + learned speed, no bias correction | 13 (14.5%) | 40 (17.9%) | 83 (18.4%) | 180 (20.2%) |
-| UKF + ZUPT + learned speed + online bias correction (Clew) | 15 (14.0%) | 40 (13.9%) | 77 (14.2%) | 166 (16.0%) |
+| Freeze (typical map app: dot stops) | 92 (99.9%) | 234 (95.8%) | 402 (85.1%) | 704 (72.7%) |
+| Hold last GNSS speed & heading | 26 (27.0%) | 144 (61.2%) | 418 (84.0%) | 892 (88.7%) |
+| IMU integration only (UKF predict, no aiding) | 14 (16.1%) | 66 (25.0%) | 150 (30.2%) | 350 (29.9%) |
+| UKF, non-holonomic model + ZUPT (no ML) | 14 (16.4%) | 70 (25.7%) | 158 (36.7%) | 404 (37.7%) |
+| UKF + ZUPT + learned speed, no bias correction | 13 (14.1%) | 40 (17.1%) | 83 (19.3%) | 174 (20.1%) |
+| UKF + ZUPT + learned speed + online bias correction (Clew) | 14 (13.4%) | 39 (13.9%) | 76 (14.5%) | 169 (16.4%) |
+| Clew + HeadingNet gyro-bias measurement | 15 (13.7%) | 40 (14.6%) | 76 (16.0%) | 180 (17.7%) |

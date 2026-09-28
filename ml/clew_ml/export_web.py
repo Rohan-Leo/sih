@@ -130,32 +130,31 @@ def fixchecker_trace(d, speednet, n: int = 1500) -> list:
 
 
 def outage_trace() -> dict:
-    from .evaluate import SpeedCorrector
-
-    c = SpeedCorrector()
     rng = np.random.default_rng(4)
-    for _ in range(40):
-        c.observe(float(rng.uniform(5, 20)), float(rng.uniform(5, 20)))
-    tr = drift.OutageTracker(0.3, c, 0.8, 0.4)
+    tr = drift.OutageTracker(0.3)
     steps, out = [], []
     for k in range(300):
-        v, om, still = float(rng.uniform(0, 15)), float(rng.normal(0, 0.1)), bool(rng.random() < 0.1)
-        tr.step(v, om, still)
-        var = float(rng.uniform(0.5, 9))
+        v, om = float(rng.uniform(0, 15)), float(rng.normal(0, 0.1))
+        tr.step(v, om)
         if k % 10 == 9:
-            tr.speed_obs(var)
             out.append(tr.features(0.3 + 0.01 * k, 5 + 0.1 * k).tolist())
-        steps.append([v, om, still, var])
-    return {"corrector": {"sxy": c.sxy, "sxx": c.sxx, "sr": c.sr, "n": c.n}, "steps": steps, "features": out}
+        steps.append([v, om])
+    return {"steps": steps, "features": out}
 
 
 def heading_helps() -> bool:
-    """Use HeadingNet in the filter only if the validation benchmark says it reduces 60 s error."""
+    """
+    Use HeadingNet in the filter only if, on the validation benchmark, it cuts the
+    median 60 s error by at least 2 % without making 120 s worse.
+    """
     path = os.path.join(os.path.dirname(__file__), "..", "results", "benchmark_val.json")
     if not os.path.exists(path):
         return False
     s = json.load(open(path))["summary"]
-    return "ukf_full_hd" in s and s["ukf_full_hd"]["60"]["median_m"] < s["ukf_full"]["60"]["median_m"]
+    if "ukf_full_hd" not in s:
+        return False
+    hd, base = s["ukf_full_hd"], s["ukf_full"]
+    return hd["60"]["median_m"] < 0.98 * base["60"]["median_m"] and hd["120"]["median_m"] <= base["120"]["median_m"]
 
 
 def main():
@@ -217,7 +216,7 @@ def main():
             s0 += 10
         zones.append({"from": int(s0), "to": int(s0 + length), "label": label})
     # a multipath episode: fixes keep arriving with ±4 m "accuracy" but are pulled off the road
-    f0 = 5000
+    f0 = 5300  # a median placement: see scripts/scan-fault.ts
     while d.truth_speed[f0] < 4:
         f0 += 10
     faults = [{"from": int(f0), "to": int(f0 + 250), "label": "Multipath — fixes pulled ~50 m off the road for 25 s",

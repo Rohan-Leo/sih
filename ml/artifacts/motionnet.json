@@ -1,0 +1,63 @@
+{
+  "channels": [
+    "yaw_rate",
+    "a_long",
+    "a_lat",
+    "a_vert",
+    "acc_mag",
+    "gyro_mag",
+    "v_turn",
+    "turning"
+  ],
+  "window": 100,
+  "hz": 10,
+  "task": "motion",
+  "train_windows": 86584,
+  "val": {
+    "macro_f1_motionnet": 0.7655407750188594,
+    "macro_f1_rules": 0.606770156863694,
+    "accuracy_motionnet": 0.8120126197987976,
+    "per_class_f1_motionnet": {
+      "stationary": 0.8968701898409441,
+      "cruising": 0.8525516706377791,
+      "accelerating": 0.5926986399427344,
+      "braking": 0.617421233783426,
+      "turning": 0.8681621408894137
+    },
+    "per_class_f1_rules": {
+      "stationary": 0.8581540974680097,
+      "cruising": 0.8261732939410085,
+      "accelerating": 0.2111597374179431,
+      "braking": 0.2800718132854578,
+      "turning": 0.8582918422060513
+    },
+    "n": 16799
+  },
+  "test": {
+    "macro_f1_motionnet": 0.6499141421557855,
+    "macro_f1_rules": 0.5643796838387267,
+    "accuracy_motionnet": 0.7774051360674588,
+    "per_class_f1_motionnet": {
+      "stationary": 0.8766788766788767,
+      "cruising": 0.8475053747497961,
+      "accelerating": 0.38972809667673713,
+      "braking": 0.2984326018808777,
+      "turning": 0.8372257607926399
+    },
+    "per_class_f1_rules": {
+      "stationary": 0.6983815595880333,
+      "cruising": 0.8418809698750919,
+      "accelerating": 0.21714285714285714,
+      "braking": 0.20418410041841006,
+      "turning": 0.8603089321692411
+    },
+    "n": 10436
+  },
+  "classes": [
+    "stationary",
+    "cruising",
+    "accelerating",
+    "braking",
+    "turning"
+  ]
+}

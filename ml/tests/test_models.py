@@ -3,7 +3,6 @@ import numpy as np
 import torch
 
 from clew_ml.drift import FEATURES as DRIFT_FEATURES, OutageTracker, pinball, quantiles
-from clew_ml.evaluate import SpeedCorrector
 from clew_ml.integrity import FEATURES, FixChecker
 from clew_ml.nets import MLP, TCN
 
@@ -30,16 +29,14 @@ def test_fixchecker_needs_an_anchor():
 
 
 def test_outage_tracker_features():
-    c = SpeedCorrector()
-    tr = OutageTracker(0.0, c, 0.9, 0.5)
+    tr = OutageTracker(0.0)
     for _ in range(100):
-        tr.step(10.0, 0.05, False)
-        tr.speed_obs(4.0)
+        tr.step(10.0, 0.05)
     f = tr.features(0.5, 12.0)
     assert len(f) == len(DRIFT_FEATURES)
     assert abs(f[DRIFT_FEATURES.index("log_dist")] - np.log1p(100.0)) < 1e-4
-    assert abs(f[DRIFT_FEATURES.index("speed_sd")] - 2.0) < 1e-6
-    assert f[DRIFT_FEATURES.index("corr_resid")] == 3.0  # no correction fit yet
+    assert abs(f[DRIFT_FEATURES.index("turn_amount")] - 0.5) < 1e-6
+    assert abs(f[DRIFT_FEATURES.index("heading_change")] - 0.5) < 1e-6
 
 
 def test_quantiles_are_monotone_and_pinball_is_finite():

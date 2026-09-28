@@ -31,7 +31,7 @@ If the basemap can't be reached (offline, restricted venue Wi-Fi), the map falls
   - **Recorded drive** (default) replays 14 minutes of a real IO-VNBD test drive that the model never saw: the phone's own accelerometer and gyroscope, plus 1 Hz GNSS. It runs through the **learned engine**. The first 5 minutes calibrate the phone mount, and **Skip mount calibration** jumps past them. After that, GNSS drops in two dead zones, and the dashed line shows where the car really went.
   - **New Delhi route** is a scripted drive on synthetic sensors (`src/demo/demoRoute.json`), run through the heuristic engine.
 
-  Both scenarios go through the **same** estimator, map and UI. Play/pause, 0.5×–4× speed, two hatched dead zones where the simulated GNSS feed is withheld, and a **Simulate GNSS loss now** button for an outage on cue. Demo mode also shows the error against ground truth, which Live mode can't know.
+  Both scenarios go through the **same** estimator, map and UI. The recorded drive also contains a 25 s multipath episode, where GNSS keeps reporting but is wrong, for IntegrityNet to catch. Play/pause, 0.5×–4× speed, two hatched dead zones where the simulated GNSS feed is withheld, and a **Simulate GNSS loss now** button for an outage on cue. Demo mode also shows the error against ground truth, which Live mode can't know.
   Open straight into it with `/?mode=demo`.
 
 ### Regenerating the demo route
@@ -55,19 +55,38 @@ On a laptop there are usually no motion sensors. Clew still works, and says so: 
 
 ## Deploy (HTTPS)
 
-- **Vercel:** import the repo; `vercel.json` sets `npm run build` → `dist`.
-- **Netlify:** import the repo; `netlify.toml` sets the same, plus an SPA fallback.
+The app is a static site: `npm run build` writes `dist/`, including the five models (~430 KB) and the replay drive (~600 KB) under `dist/ml/`. It needs no server, API keys or environment variables.
 
-## The learned engine (in the browser)
+- **Vercel:** *Add New → Project*, import the GitHub repo, keep the detected settings (`vercel.json` sets `npm run build` → `dist`) and deploy. Vercel builds the default branch, so merge into `main` first, or choose the branch under *Settings → Git*.
+- **Netlify:** *Add new site → Import an existing project*; `netlify.toml` sets the same build, plus an SPA fallback.
+- **CLI instead:** `npx vercel --prod` or `npx netlify deploy --prod --dir dist` from the repo root.
 
-`src/ml/` is a TypeScript port of the trained pipeline from `ml/`:
-- online phone-mount calibration
-- the speed network, loaded from `public/ml/speednet.bin` (201 KB) and run once per second in about 20 ms, with no ML runtime
-- a UKF with zero-velocity updates and online speed-bias correction
+Share `https://<your-app>/?mode=demo` for the judges' demo.
 
-It takes over from the heuristic automatically once the mount is calibrated, which needs about 5 minutes of driving with GNSS. You'll see **Engine: LEARNED** under the readouts. Without motion sensors (most laptops) it stays on the heuristic.
+## The learned engine: five models in the browser
 
-`npm run check:model` checks the TypeScript network against PyTorch outputs, then replays the recorded drive through both engines headlessly. On that drive, the learned engine ends dead zones A and B with 42 m and 5 m of error; the heuristic ends them with 183 m and 101 m.
+`src/ml/` runs the trained pipeline from `ml/` in plain TypeScript. There's no ML runtime: one small runner, `src/ml/tinynet.ts`, executes all five networks. Each network is an encoder (a dilated 1D CNN over a 10 s IMU window, or an MLP over a feature vector) plus a task head.
+
+| # | Model | What it does in the app | Held-out result (test drives) |
+|---|---|---|---|
+| 1 | **SpeedNet** | forward speed, its uncertainty and a stationary flag → UKF speed updates and ZUPT | median error 60 s into an outage: **80 m** vs 143 m (IMU only) and 335 m (hold last speed/heading) |
+| 2 | **HeadingNet** | gyro yaw-rate error → "Gyro err" readout | yaw-rate RMSE 1.07 °/s vs 1.15 °/s for the calibrated gyro. **Not used in the filter**: it didn't reduce outage error, because the UKF already learns the gyro bias from GNSS |
+| 3 | **MotionNet** | stationary / cruising / accelerating / braking / turning → "Driving" readout | macro-F1 **0.65** vs 0.56 for hand-tuned rules; braking F1 0.30 vs 0.20 |
+| 4 | **IntegrityNet** | P(fault) for every GNSS fix, from how well it agrees with the IMU → rejects multipath, drift, frozen and speed faults | F1 **0.94** vs 0.37 for a UKF-style innovation gate and 0.07 for the previous accuracy-threshold rule; rejects 1 % of good fixes |
+| 5 | **DriftNet** | 50 / 68 / 95 % error radius while dead reckoning → the halo and the "95% within" readout | 67 % / 93 % of true errors fall inside the 68 / 95 % radii; quantile loss **0.213** vs 0.252 (UKF covariance) and 0.260 (previous heuristic) |
+
+The learned engine takes over from the heuristic automatically once the phone mount is calibrated, which needs about 5 minutes of driving with GNSS. You'll then see **Engine: LEARNED · UKF + 5 models**. Without motion sensors (most laptops) it stays on the heuristic. SpeedNet is required; if any of the other four fails to load, the app logs it and runs without that model.
+
+Full tables and caveats are in [`ml/results/models.md`](ml/results/models.md) and [`ml/README.md`](ml/README.md).
+
+`npm run check:model` checks the TypeScript port end to end:
+- all five networks against PyTorch outputs (max deviation < 1e-5)
+- the IntegrityNet and DriftNet feature code against the Python originals
+- a headless replay of the recorded drive through both engines
+
+On that drive, the learned engine ends dead zones A and B with 41 m and 17 m of error; the heuristic ends them with 177 m and 102 m.
+
+In the recorded-drive demo, a **multipath episode** (orange hatching on the progress strip) keeps fixes arriving with a confident ±4 m while pulling them about 50 m off the road. IntegrityNet rejects them and the app dead-reckons through; the heuristic follows them off the road. `scripts/scan-fault.ts` slides that episode along the drive. At its median placement, the learned engine ends it 52 m off versus 61 m for following the bad fixes. The gain in position is modest over 25 s, because dead reckoning drifts too. The bigger win is that the bad fixes never reach the filter.
 
 ## How the heuristic fallback works — and what it isn't
 
@@ -83,15 +102,20 @@ This is a **lightweight, demo-grade heuristic**, not production-grade dead recko
 
 ## The real pipeline (`ml/`)
 
-The in-app fallback is a lightweight heuristic; the actual dead-reckoning pipeline lives in [`ml/`](ml/README.md). It covers IO-VNBD data repair, mount calibration, a learned speed model exported to ONNX/TFLite, a UKF with a non-holonomic motion model, ZUPT and online bias correction, and HMM map matching.
+[`ml/`](ml/README.md) is where all five models are trained and benchmarked on the PS-mandated IO-VNBD dataset. It covers:
+- repairing the dataset
+- mount calibration
+- the models, exported to the browser (and SpeedNet also to ONNX/TFLite)
+- the UKF with a non-holonomic motion model, ZUPT and online bias correction
+- HMM map matching
 
-On 2.9 h of held-out drives, after 60 s without GNSS, the median position error is:
+On 2.9 h of held-out drives, the median position error 60 s after GNSS is lost is:
 
 | Method | Median error |
 |---|---:|
-| Clew pipeline | **81 m** |
-| IMU integration alone | 135 m |
-| Holding the last speed and heading | 326 m |
+| Clew pipeline | **80 m** |
+| IMU integration alone | 143 m |
+| Holding the last speed and heading | 335 m |
 | A frozen dot | 490 m |
 
 Map matching isn't in these numbers yet, because it needs OSM road data. See `ml/README.md` for the full table and caveats.
@@ -101,10 +125,16 @@ Map matching isn't in these numbers yet, because it needs OSM road data. See `ml
 ```
 src/
   engine/
-    positionEstimator.ts  GNSS health + dead reckoning + blend-back (swap point for the real model)
+    positionEstimator.ts  GNSS health + dead reckoning + blend-back (heuristic engine, hooks for the learned one)
     navEngine.ts          clock, sources, route progress, thread, event log
     liveSource.ts         Geolocation / DeviceMotion / DeviceOrientation (+ iOS permission)
     demoSource.ts         scripted GNSS/IMU feed with dead zones
+    replaySource.ts       recorded IO-VNBD drive with dead zones and a multipath episode
+  ml/
+    tinynet.ts            one runner for all five networks
+    learnedEstimator.ts   UKF + the five models wired into the estimator
+    speednet.ts, imuModels.ts, integrity.ts, drift.ts   per-model wrappers and live feature code
+    calib.ts, ukf.ts      online mount calibration, UKF
   services/               Photon search, OSRM routing + instruction text
   components/             map, search, turn banner, status badge, console, About drawer
   demo/                   baked demo route + shared timeline generator

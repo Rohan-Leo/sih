@@ -1,6 +1,6 @@
 # Clew — dead-reckoning pipeline (ML + fusion)
 
-The real positioning pipeline behind Clew, trained and benchmarked on the PS-mandated **IO-VNBD** dataset: phone IMU → mount calibration → learned speed (PyTorch → ONNX / TFLite) → UKF with a non-holonomic motion model, ZUPT and online bias correction → HMM map matching.
+The real positioning pipeline behind Clew, trained and benchmarked on the PS-mandated **IO-VNBD** dataset: phone IMU → mount calibration → learned speed (PyTorch → ONNX / TFLite) → UKF with a non-holonomic motion model, ZUPT and online bias correction → HMM map matching. Four more models sit around that core: HeadingNet (gyro error), MotionNet (driving state), IntegrityNet (GNSS fault detection) and DriftNet (error radius). See [Five models](#five-models).
 
 ## Results (held-out drives)
 
@@ -10,14 +10,15 @@ GNSS is cut for 120 s at one-minute intervals while driving. Every method starts
 
 | Method | 10 s | 30 s | 60 s | 120 s |
 |---|---:|---:|---:|---:|
-| Freeze (typical map app: dot stops) | 97 (100%) | 301 (98%) | 490 (87%) | 772 (78%) |
-| Hold last GNSS speed & heading | 21 (22%) | 132 (40%) | 326 (54%) | 802 (72%) |
-| IMU integration only | 17 (13%) | 62 (22%) | 135 (24%) | 268 (23%) |
-| UKF + ZUPT, no ML | 19 (20%) | 98 (43%) | 235 (53%) | 533 (53%) |
-| UKF + ZUPT + learned speed | 16 (19%) | 55 (22%) | 104 (20%) | 187 (17%) |
-| **Clew: + online bias correction** | **15 (16%)** | **48 (17%)** | **81 (14%)** | **154 (14%)** |
+| Freeze (typical map app: dot stops) | 97 (100%) | 302 (98%) | 490 (87%) | 771 (78%) |
+| Hold last GNSS speed & heading | 22 (23%) | 131 (41%) | 335 (55%) | 808 (72%) |
+| IMU integration only | 16 (13%) | 64 (20%) | 143 (25%) | 282 (23%) |
+| UKF + ZUPT, no ML | 21 (23%) | 98 (43%) | 236 (52%) | 527 (53%) |
+| UKF + ZUPT + learned speed | 16 (18%) | 53 (23%) | 95 (19%) | 167 (17%) |
+| **Clew: + online bias correction** | **15 (16%)** | **49 (17%)** | **80 (13%)** | **154 (13%)** |
+| Clew + HeadingNet as gyro-bias measurement | 15 (16%) | 50 (16%) | 81 (15%) | 150 (15%) |
 
-At 60 s, Clew's mean error is 138 m (vs 187 m for IMU-only) and its 90th percentile is 377 m (vs 383 m). The validation split (4.7 h, 144 outages) shows the same ordering: Clew 77 m median at 60 s, vs 157 m for IMU-only. All features are strictly causal, i.e. computable live. Full tables are in `results/`.
+At 60 s, Clew's mean error is 136 m (vs 186 m for IMU-only) and its 90th percentile is 374 m (vs 380 m). The validation split (4.7 h, 144 outages) shows the same ordering: Clew 76 m median at 60 s, vs 150 m for IMU-only. All features are strictly causal, i.e. computable live. Full tables are in `results/`.
 
 ### Read these numbers honestly
 
@@ -29,6 +30,32 @@ At 60 s, Clew's mean error is 138 m (vs 187 m for IMU-only) and its 90th percent
   - That weak accelerometer is why the centripetal non-holonomic update is gated off on most drives (it's used only when lateral calibration R² > 0.6).
   - Android phones deliver 100–200 Hz, which should help the learned model a lot.
 - **The no-ML ZUPT baseline does badly on test** because its stationarity heuristic fires falsely at times. The learned stationary head doesn't have this problem.
+- **Numbers move by a few metres between preprocessing runs.** The simulated GNSS noise is seeded with Python's `hash()` of the drive name, which is randomised per process, so re-running `preprocess` redraws it. The ordering of methods has been stable across runs.
+
+## Five models
+
+Each model is an encoder plus a task head, in one shared layout (`clew_ml/nets.py`), so the browser runs all of them with one ~150-line TypeScript runner (`src/ml/tinynet.ts`). The encoder is a dilated 1D CNN (TCN) over the 10 s IMU feature window, or an MLP over a feature vector. Full results: [`results/models.md`](results/models.md).
+
+| Model | Encoder → head | Trained on | Test result | In the app |
+|---|---|---|---|---|
+| **SpeedNet** (`model.py`, `train.py`) | TCN, 51k params → speed, log-variance, stationary logit | wheel-speed labels | outage error at 60 s: 80 m vs 143 m IMU-only | UKF speed updates, ZUPT |
+| **HeadingNet** (`imu_models.py heading`) | TCN, 24k → δ yaw rate, log-variance | true − calibrated yaw rate over 10 s | yaw RMSE 1.07 vs 1.15 °/s; outage error unchanged (81 vs 80 m) | readout only; kept out of the filter by the export gate |
+| **MotionNet** (`imu_models.py motion`) | TCN, 24k → 5 classes | states labelled from vehicle speed and heading | macro-F1 0.65 vs 0.56 rules | "Driving" readout |
+| **IntegrityNet** (`integrity.py`) | MLP, 5k → P(fault) | 9 consistency features per fix, with injected faults | F1 0.94 vs 0.37 innovation gate; 1 % of good fixes rejected | rejects faulty fixes before they reach the UKF |
+| **DriftNet** (`drift.py`) | MLP, 5k → 50/68/95 % log-error quantiles | 55k outage-seconds from simulated outages on training drives | coverage 67 % / 93 %; quantile loss 0.213 vs 0.252 UKF covariance | halo radius, "95% within" readout |
+
+What didn't work, kept for the record:
+
+- **HeadingNet as a direct gyro correction** (adding δ to the gyro) made 60 s error worse on validation: 89–93 m vs 76 m. As a UKF measurement of the gyro bias it is neutral (76 vs 76 m, and worse at 120 s). The UKF already learns the bias from GNSS before an outage, so the learned estimate adds little. The export step (`export_web.heading_helps`) turns it on only if validation improves ≥ 2 % at 60 s without getting worse at 120 s.
+- **DriftNet with per-drive features** (mount-calibration R², speed-correction residual, the speed model's σ) memorised the ~20 training drives: test quantile loss was 0.34, worse than both baselines. The six features it uses now are all outage-local.
+- **DriftNet without calibration** under-covers on unseen drives. The quantiles are shifted by conformal offsets fitted on validation drives.
+
+IntegrityNet's caveats:
+
+- **Faults are injected, not recorded.** IO-VNBD has no labelled multipath, so the fault types, magnitudes and rates are ours. Drift faults are the hardest: 67 % flagged, and some aren't bad yet when they start.
+- **It is more permissive after a long gap.** The next fix after an outage is usually good, and the model learned that. In the replay demo, two faulty fixes got through at the end of the 25 s multipath episode. The app protects against the fallout two ways:
+  - a fix trusted after a > 10 s gap is *provisional*, and is rolled back if the next fixes disagree with it but agree with the view before it
+  - the UKF is restarted at the fix after 3 trusted fixes in a row fail its innovation gate
 
 ## Pipeline
 
@@ -41,7 +68,7 @@ At 60 s, Clew's mean error is 138 m (vs 187 m for IMU-only) and its 90th percent
 | Fusion | `clew_ml/ukf.py` | UKF with state [E, N, ψ, v, gyro bias, accel bias]. Non-holonomic unicycle motion. Updates: GNSS with innovation gating, ZUPT, learned speed, and an optional centripetal constraint. |
 | Bias correction | `evaluate.py: SpeedCorrector` | Learns v_gnss ≈ k·v̂ online while GNSS is good (~2 min memory) and applies it during outages. |
 | Map matching | `clew_ml/mapmatch.py` | Online HMM (Newson & Krumm): candidates on nearby road segments, emission from filter σ, transitions from network vs travelled distance. The matched point feeds back into the UKF. |
-| Web export | `clew_ml/export_web.py` | Weights as float32 (`public/ml/speednet.bin`), a 14-min held-out drive for the in-app replay demo, and test vectors. The TypeScript port (`src/ml/`) matches PyTorch to 6e-6. |
+| Web export | `clew_ml/export_web.py` | All five models as float32 blobs + manifests (`public/ml/<model>.{bin,json}`), a 14-min held-out drive (with a multipath episode) for the in-app replay demo, and test vectors for the networks and the live feature code. The TypeScript port (`src/ml/`) matches PyTorch to < 1e-5. |
 | Export | `clew_ml/export.py` | `speednet.onnx` and `speednet.tflite` (216 KB each; both match PyTorch to <1e-5; 0.16 ms per inference on CPU), plus `speednet.weights.json`. |
 
 Dataset repairs in `data.py`, each discovered along the way:
@@ -60,12 +87,18 @@ cd ml
 pip install -r requirements.txt
 ./download_iovnbd.sh                    # ~410 MB into data/raw/
 python -m clew_ml.preprocess            # align + cache → data/processed/
-python -m clew_ml.train                 # ~6 min on a laptop CPU → artifacts/speednet.pt
-python -m clew_ml.evaluate --split val  # tune here
+python -m clew_ml.train                 # SpeedNet, ~6 min on a laptop CPU → artifacts/speednet.pt
+python -m clew_ml.imu_models heading    # HeadingNet   → artifacts/headingnet.pt
+python -m clew_ml.imu_models motion     # MotionNet    → artifacts/motionnet.pt
+python -m clew_ml.integrity             # IntegrityNet → artifacts/integritynet.pt
+python -m clew_ml.evaluate --split val  # tune here (also decides whether HeadingNet goes in the filter)
 python -m clew_ml.evaluate --split test # report here → results/
-python -m clew_ml.export                # ONNX (+ TFLite with `pip install litert-torch`)
+python -m clew_ml.drift                 # DriftNet     → artifacts/driftnet.pt (simulates outages; slow the first time)
+python -m clew_ml.export_web            # all five models + replay drive → ../public/ml, test vectors → ../src/ml
+python -m clew_ml.report                # → results/models.md
+python -m clew_ml.export                # SpeedNet as ONNX (+ TFLite with `pip install litert-torch`)
 python -m clew_ml.osm                   # optional: OSM roads for map-matched evaluation
 pytest tests/
 ```
 
-Model input is float32 `(1, 8, 100)`: 10 s of features at 10 Hz, raw, since normalisation is inside the graph. The channel order is in `artifacts/speednet.json`. Output is `[speed m/s, log-variance, stationary logit]`.
+SpeedNet, HeadingNet and MotionNet take float32 `(1, 8, 100)`: 10 s of features at 10 Hz, raw, since normalisation is inside the graph. The channel order is in `artifacts/speednet.json`. SpeedNet outputs `[speed m/s, log-variance, stationary logit]`. IntegrityNet and DriftNet take the feature vectors listed in `artifacts/{integritynet,driftnet}.json`. Then run `npm run check:model` from the repo root to verify the browser port.
