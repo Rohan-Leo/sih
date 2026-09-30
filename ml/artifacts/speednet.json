@@ -1,0 +1,17 @@
+{
+  "channels": [
+    "yaw_rate",
+    "a_long",
+    "a_lat",
+    "a_vert",
+    "acc_mag",
+    "gyro_mag",
+    "v_turn",
+    "turning"
+  ],
+  "window": 100,
+  "hz": 10,
+  "best_val_rmse": 3.84279727935791,
+  "var_scale": 2.74267840385437,
+  "val_within_1sigma": 0.7986189723014832
+}

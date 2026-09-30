@@ -1,0 +1,8 @@
+numpy>=1.26
+pandas>=2.0
+torch>=2.3
+onnx>=1.16
+onnxruntime>=1.18
+pytest>=8
+# optional, for the .tflite export (use a separate venv if it conflicts with your torch):
+# litert-torch
