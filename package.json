@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "bake:demo": "node scripts/bake-demo-route.mjs",
-    "check:model": "jiti scripts/verify-speednet.ts && jiti scripts/replay-check.ts"
+    "check:model": "jiti scripts/verify-speednet.ts && jiti scripts/replay-check.ts",
+    "sim:gnss-loss": "jiti scripts/gnss-loss-sim.ts"
   },
   "dependencies": {
     "framer-motion": "^13.4.4",
